@@ -1,0 +1,484 @@
+"use strict";
+const $ = id => document.getElementById(id);
+const node = (tag, attrs = {}, ...children) => {
+  const result = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (key.startsWith("on")) result.addEventListener(key.slice(2), value);
+    else if (key === "class") result.className = value;
+    else if (key in result) result[key] = value;
+    else result.setAttribute(key, value);
+  }
+  result.append(...children.filter(c => c !== null && c !== undefined));
+  return result;
+};
+const svgNode = (tag, attrs = {}) => {
+  const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [key, value] of Object.entries(attrs)) element.setAttribute(key, value);
+  return element;
+};
+const local = value => value ? new Date(value).toLocaleString(undefined, {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "No result yet";
+const percent = value => value === null ? "N/A" : value === 1 ? "100%" : value === 0 ? "0%" : value > .999999 ? "<100%" : `${(value * 100).toFixed(4).replace(/0+$/, "").replace(/\.$/, "")}%`;
+const ms = value => value === null || value === undefined ? "—" : `${value.toFixed(2)} ms`;
+const seconds = value => `${value.toFixed(3)} s`;
+const id = prefix => `${prefix}-${crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), b=>b.toString(16).padStart(2,"0")).join("")}`;
+let csrf = null, config = null, statusData = null, historyData = null, selected = {seconds:3600};
+let busy = false, again = false, timer = null, editing = null, editSnapshot = null, settingsSnapshot = null, lastRange = null;
+let orderSnapshot = null, orderSaving = false, orderLoading = false;
+let resourceDrag = null, checkDrag = null, checkOrderStart = null;
+let orderRequest = 0;
+const detailId = () => location.hash.startsWith("#resource/") ? decodeURIComponent(location.hash.slice(10)) : null;
+const speedPage = () => location.hash === "#speedtest";
+function rememberRange() {
+  try {sessionStorage.setItem("connectivity-range",JSON.stringify({csrf,selected}));} catch {}
+}
+function restoreRange() {
+  try {
+    const saved=JSON.parse(sessionStorage.getItem("connectivity-range"));
+    if(saved?.csrf!==csrf)return;
+    const range=saved.selected;
+    if([3600,86400,1209600].includes(range?.seconds))selected={seconds:range.seconds};
+    else if(typeof range?.from==="string"&&typeof range?.to==="string"&&Date.parse(range.from)<Date.parse(range.to)&&Date.parse(range.to)-Date.parse(range.from)<=1209600000)selected={from:range.from,to:range.to};
+  } catch {}
+}
+
+async function api(path, options = {}) {
+  const headers = {...options.headers};
+  if (options.method && options.method !== "GET") Object.assign(headers, {"Content-Type":"application/json", "X-CSRF-Token":csrf || ""});
+  const controller = new AbortController();
+  const deadline = setTimeout(()=>controller.abort(),10000);
+  let result, body;
+  try {
+    result = await fetch(`api/v1${path}`, {...options, headers, cache:"no-store", signal:controller.signal});
+    body = await result.json();
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("API request timed out. For a save, reload configuration to check whether it committed.");
+    throw error;
+  } finally { clearTimeout(deadline); }
+  if (!result.ok) {
+    const failure = new Error(body.error?.message || "Request failed");
+    failure.code = body.error?.code; failure.status = result.status;
+    if (result.status === 401 && path !== "/session") showLogin();
+    throw failure;
+  }
+  return body;
+}
+function showLogin() {
+  SpeedUI.reset();
+  orderRequest++;orderLoading=false;
+  resourceDrag?.destroy();resourceDrag=null;orderSnapshot=null;
+  endCheckOrder(false);
+  csrf = null; clearTimeout(timer);
+  statusData=null;historyData=null;
+  $("content").replaceChildren(node("p",{class:"muted"},"Loading current observations…"));
+  $("summary").replaceChildren();$("health").replaceChildren();setStale(null);
+  $("dashboard").hidden = true; $("navigation").hidden = true; $("login").hidden = false;
+  $("editor").close(); $("settings-dialog").close(); $("resource-order-panel").hidden=true;
+}
+function showDashboard() {
+  $("login").hidden = true; $("navigation").hidden = false;
+  navigate();
+}
+function navigate() {
+  if (!csrf) return;
+  $("dashboard").hidden = speedPage();$("live").hidden=speedPage();
+  if(speedPage()) {if(orderSnapshot)endResourceOrder();clearTimeout(timer);setStale(null);SpeedUI.show();return;}
+  SpeedUI.hide();
+  $("live").textContent="○ Connecting";
+  refresh();
+}
+function setStale(message) {
+  $("banner").textContent = message ? `Disconnected / stale dashboard — ${message} Monitoring may continue on the host. Retrying automatically.` : "";
+  $("banner").hidden = !message;
+  $("live").textContent = message ? "● Stale" : "● Live";
+  $("live").classList.toggle("stale", Boolean(message));
+}
+function getRange(data) {
+  if (selected.from) return {from:selected.from, to:selected.to};
+  const to = new Date(data.server_time);
+  return {from:new Date(to.getTime() - selected.seconds * 1000).toISOString(), to:to.toISOString()};
+}
+async function refresh() {
+  if (!csrf || document.hidden || speedPage()) return;
+  if (busy) { again = true; return; }
+  busy = true; clearTimeout(timer);
+  const rid = detailId();
+  const selection = JSON.stringify(selected);
+  try {
+    const current = await api("/status");
+    const range = getRange(current);
+    const historical = await api(`${rid ? `/resources/${encodeURIComponent(rid)}` : ""}/history?${new URLSearchParams({...range,max_points:600})}`);
+    if (speedPage()) return;
+    if (rid !== detailId() || selection !== JSON.stringify(selected) || historical.config_revision !== current.config_revision) { again = true; return; }
+    statusData = current; historyData = historical; lastRange = range;
+    setStale(null); render();
+    $("updated").textContent = `Updated ${local(current.server_time)} · refresh ${current.refresh_interval_seconds}s`;
+  } catch (error) {
+    if (error.status === 404 && rid) { location.hash = ""; again = true; }
+    else if (csrf) setStale(error.message);
+  } finally {
+    busy = false;
+    if (again) { again = false; if (csrf) timer = setTimeout(refresh, 0); }
+    else if (csrf) timer = setTimeout(refresh, (statusData?.refresh_interval_seconds || 15) * 1000);
+  }
+}
+function badge(state) { return node("span", {class:`badge ${state}`}, `● ${state}`); }
+function chartTooltip(svg, points, describe) {
+  const title = svgNode("title");
+  let active = 0;
+  const show = index => {active=Math.max(0,Math.min(points.length-1,index));title.textContent=describe(points[active]);};
+  svg.append(title);
+  svg.setAttribute("tabindex","0");
+  svg.addEventListener("pointermove",event=>{const box=svg.getBoundingClientRect();show(Math.floor((event.clientX-box.left)/box.width*points.length));});
+  svg.addEventListener("keydown",event=>{if(event.key==="ArrowLeft"||event.key==="ArrowRight"){event.preventDefault();show(active+(event.key==="ArrowRight"?1:-1));svg.setAttribute("aria-label",title.textContent);}});
+  show(0);
+}
+function timeline(series) {
+  const container = node("div", {class:"timeline"});
+  const svg = svgNode("svg", {viewBox:`0 0 ${series.timeline.length} 24`,preserveAspectRatio:"none",role:"img","aria-label":"State timeline. Any downtime marks a block offline; otherwise unobserved time marks it unknown. Hover for actual durations."});
+  const colors = {online:"#b9ed85",offline:"#ffad87",unknown:"#35434e"};
+  const paths = new Map();
+  const addPath=(color,part)=>paths.set(color,(paths.get(color)||"")+part);
+  series.timeline.forEach((point,i)=>{
+    addPath(colors[point.state],`M${i} 0h1.05v24h-1.05Z`);
+  });
+  for(const [fill,d] of paths)svg.append(svgNode("path",{fill,d}));
+  chartTooltip(svg,series.timeline,point=>`${local(point.from)} – ${local(point.to)}\n${point.state.toUpperCase()} · online ${seconds(point.online_seconds)} / offline ${seconds(point.offline_seconds)} / unknown ${seconds(point.unknown_seconds)}\nBlock shows the worst state present, not its duration.\n${series.precision}${series.approximate ? " · approximate boundaries" : ""}`);
+  container.append(svg, node("div", {class:"timeline-labels"}, node("span",{},local(series.requested_range.from)), node("span",{},local(series.requested_range.to))));
+  return container;
+}
+function stat(label, value) { return node("div", {}, node("div", {class:"stat-label"}, label), node("div", {class:"stat-value"}, value)); }
+function precision(series) {
+  return `${series.precision}${series.approximate ? " · approximate partial-minute durations" : ""}. Unknown time is excluded from availability, included in coverage.`;
+}
+function resourceCard(resource, detailed = false) {
+  const series = historyData.resources[resource.id];
+  if (!series) return node("p", {class:"muted"}, "Waiting for a coherent history snapshot…");
+  const title = detailed || orderSnapshot ? node("span", {class:"resource-name"}, resource.name) : node("a", {class:"resource-name",href:`#resource/${encodeURIComponent(resource.id)}`},resource.name);
+  const c = resource.check_counts;
+  const indicators = resource.checks.filter(c=>c.reason === "overdue" || c.latest?.outcome === "error");
+  const meta = node("div", {class:"resource-meta"}, badge(resource.state), node("span",{},`${c.online} online · ${c.offline} offline · ${c.unknown} unknown`), node("span",{},`Last result ${local(resource.latest_completion)}`), indicators.length ? node("span",{class:"offline"},`${indicators.length} overdue / monitor error`) : null);
+  const actions = node("div",{class:"card-actions"});
+  actions.hidden = Boolean(orderSnapshot);
+  if (!detailed) actions.append(node("a",{href:`#resource/${encodeURIComponent(resource.id)}`,"aria-label":`Open ${resource.name}`},"Details ↗"));
+  actions.append(node("button",{class:"quiet",onclick:()=>openEditor(resource.id)},"Edit"),node("button",{class:"quiet danger",onclick:()=>deleteResource(resource.id)},"Delete"));
+  const result = node("article",{class:"resource-card","data-id":resource.id},node("div",{class:"resource-head"},node("div",{},title,meta),actions),node("div",{class:"resource-body"},timeline(series),stat("AVAILABILITY",percent(series.availability)),stat("COVERAGE",percent(series.coverage))));
+  if (detailed) result.append(node("p",{class:"precision"},precision(series)),node("p",{class:"precision"},`History since ${local(resource.reset_at)} · ${resource.reset_reason}`));
+  return result;
+}
+function latencyChart(check, series, previous) {
+  const rangeKey = JSON.stringify(selected);
+  if (previous && previous.dataset.generation === check.generation && previous.dataset.range === rangeKey) {
+    previous.update(check, series);
+    return previous;
+  }
+  const chart = LatencyCharts.create(check, series);
+  chart.dataset.generation = check.generation;
+  chart.dataset.range = rangeKey;
+  return chart;
+}
+function updateChildren(parent, children) {
+  for (const child of [...parent.children]) if (!children.includes(child)) child.remove();
+  children.forEach((child, index) => {
+    if (parent.children[index] !== child) parent.insertBefore(child, parent.children[index] || null);
+  });
+}
+function checkCard(check, previousDetails, previousChart, previousCard) {
+  const series = historyData.checks[check.id];
+  if (!series) return node("div");
+  const latest = check.latest;
+  const target = check.type === "http" ? `${check.method} ${check.url} → expected ${check.expected_status}` : `${check.host}${check.port ? `:${check.port}` : ""}`;
+  const card = previousCard || node("article",{class:"check-card","data-check":check.id});
+  const children = [node("div",{class:"check-header"},node("div",{},node("h3",{},check.name,node("span",{class:"muted"},` / ${check.type.toUpperCase()}`)),node("div",{class:"target"},target)),badge(check.state))];
+  const info = node("div",{class:"check-info"},node("span",{},`Every ${check.interval_seconds}s · timeout ${check.timeout_seconds}s`),node("span",{},`Latest ${local(check.latest_completion)}`),node("span",{},`State reason: ${check.reason}`));
+  if (latest) {
+    info.append(node("span",{},`Metric ${latest.latency_upper_bound ? "≤ " : ""}${ms(latest.latency_ms)} · total ${seconds(latest.elapsed_seconds)}`));
+    if (latest.destination_address) info.append(node("span",{},`Destination ${latest.destination_address}`));
+    if (latest.http_status) info.append(node("span",{},`HTTP ${latest.http_status} / expected ${check.expected_status}`));
+    if (latest.certificate_expires_at) info.append(node("span",{},`Certificate expires ${local(latest.certificate_expires_at)} (${latest.certificate_expires_at} UTC) · ${(latest.certificate_remaining_seconds/86400).toFixed(1)} days remaining`));
+  }
+  children.push(info);
+  if (latest?.message) children.push(node("div",{class:latest.outcome === "error" ? "notice" : "warning"},`${latest.code}: ${latest.message}`));
+  children.push(node("div",{class:"resource-body"},timeline(series),stat("AVAILABILITY",percent(series.availability)),stat("COVERAGE",percent(series.coverage))),latencyChart(check,series,previousChart));
+  const lat = series.latency, counts = series.counts;
+  children.push(node("div",{class:"latency-stats"},node("span",{},"Min ",node("strong",{},ms(lat.min_ms))),node("span",{},"Mean ",node("strong",{},ms(lat.mean_ms))),node("span",{},"Max ",node("strong",{},ms(lat.max_ms))),node("span",{},`${lat.samples} latency samples · ${counts.success} successes / ${counts.failure} failures / ${counts.error} monitor errors`)));
+  children.push(node("p",{class:"precision"},precision(series)),node("p",{class:"precision"},`Count/latency effective range: ${local(series.count_latency_effective_range.from)} – ${local(series.count_latency_effective_range.to)}. History since ${local(check.reset_at)} · ${check.reset_reason}`));
+  if (series.diagnostic_codes.length) children.push(node("p",{class:"precision"},`Diagnostic codes in range: ${series.diagnostic_codes.join(", ")}`));
+  const rangeKey = JSON.stringify(selected);
+  if (previousDetails && previousDetails.dataset.generation === check.generation && previousDetails.dataset.range === rangeKey) {
+    const errors = previousDetails.querySelector(".error-list");
+    errors.replaceChildren(...check.recent_errors.slice().reverse().map(e=>node("li",{},`${local(e.time)} · ${e.code}: ${e.message}`)));
+    children.push(previousDetails);
+    updateChildren(card, children);
+    return card;
+  }
+  const details = node("details",{"data-check":check.id,"data-generation":check.generation,"data-range":rangeKey},node("summary",{},"Recent executions & errors"));
+  const errors = node("ul",{class:"error-list"});
+  check.recent_errors.slice().reverse().forEach(e=>errors.append(node("li",{},`${local(e.time)} · ${e.code}: ${e.message}`)));
+  details.append(node("p",{class:"raw-note"},"Raw results are a snapshot loaded on request, within the retained hour and selected range. Reload to see new executions. Older history has minute summaries only. Errors below refresh live, showing the latest 20 within one hour."),errors);
+  const records = node("div",{class:"records"});
+  const load = node("button",{type:"button",onclick:()=>loadRecords(check.id,records,load,null)},"Load recent executions");
+  details.append(load,records); children.push(details);
+  updateChildren(card, children);
+  return card;
+}
+async function loadRecords(cid, container, button, cursor) {
+  button.disabled = true;
+  try {
+    const query = new URLSearchParams({...lastRange,limit:100}); if(cursor)query.set("cursor",cursor);
+    const data = await api(`/checks/${encodeURIComponent(cid)}/results?${query}`);
+    if (!cursor) container.replaceChildren();
+    if (!data.results.length) container.append(node("p",{class:"muted"},"No raw executions in this range."));
+    else {
+      let table = container.querySelector("table");
+      if (!table) {table=node("table",{},node("thead",{},node("tr",{},...(["Completed, local time","Outcome","Code","Protocol metric","Total duration"].map(t=>node("th",{},t))))),node("tbody"));container.append(table);}
+      data.results.forEach(r=>table.querySelector("tbody").append(node("tr",{},node("td",{},local(r.completed_at)),node("td",{class:r.outcome==="success"?"online":r.outcome==="failure"?"offline":"unknown"},r.outcome),node("td",{},r.code),node("td",{},`${r.latency_upper_bound?"≤ ":""}${ms(r.latency_ms)}`),node("td",{},seconds(r.elapsed_seconds)))));
+    }
+    button.textContent = data.next_cursor ? "Load more" : "Reload recent executions";
+    button.onclick = null;
+    const replacement = node("button",{type:"button",onclick:()=>loadRecords(cid,container,replacement,data.next_cursor)},button.textContent);
+    button.replaceWith(replacement);
+  } catch(error) {container.append(node("p",{class:"error"},error.message));} finally {button.disabled=false;}
+}
+function render() {
+  if (!statusData || !historyData) return;
+  const rid = detailId(), resources = statusData.resources, resource = resources.find(r=>r.id===rid);
+  $("reorder-resources").disabled = resources.length < 2 || orderLoading;
+  $("reorder-resources").hidden = Boolean(rid || orderSnapshot);
+  $("resource-order-panel").hidden = !orderSnapshot;
+  for (const id of ["name-filter","state-filter","add-resource","settings"]) $(id).disabled = Boolean(orderSnapshot);
+  $("page-title").textContent = resource ? resource.name : "Resources";
+  $("page-subtitle").textContent = resource ? "Current observations and the history behind them." : "Reachability from this machine. Not a global availability guarantee.";
+  $("filters").hidden = Boolean(rid); $("summary").hidden = Boolean(rid);
+  $("summary").replaceChildren(...[["MONITORED RESOURCES",resources.length,""],["ONLINE",resources.filter(r=>r.state==="online").length,"online"],["OFFLINE",resources.filter(r=>r.state==="offline").length,"offline"],["UNKNOWN",resources.filter(r=>r.state==="unknown").length,"unknown"]].map(([label,value,kind])=>node("div",{class:"summary-item"},node("span",{},label),node("strong",{class:kind},String(value)))));
+  $("health").replaceChildren(...statusData.health.notices.slice(-2).map(n=>node("p",{class:"notice"},`${n.code} · ${local(n.at)} — ${n.message}`)));
+  if (statusData.health.skipped_starts) $("health").append(node("p",{class:"precision"},`${statusData.health.skipped_starts} skipped cadence starts since startup (busy probes, monitor gaps, or capacity). These are not target failures.`));
+  $("range-label").textContent = `${selected.from ? "Fixed" : "Rolling"} · ${local(lastRange.from)} – ${local(lastRange.to)}`;
+  document.querySelectorAll("[data-range]").forEach(b=>b.classList.toggle("selected",selected.from ? b.dataset.range==="custom" : +b.dataset.range===selected.seconds));
+  const content = $("content");
+  if (orderSnapshot && resourceDrag) {
+    if (statusData.config_revision !== orderSnapshot.revision && !$("resource-order-error").textContent) {
+      $("resource-order-error").textContent = "Configuration changed in another tab. Your order is unsaved; reload before saving.";
+      $("reload-resource-order").hidden = false;
+    }
+    return;
+  }
+  const previousDetails = new Map([...content.querySelectorAll("details")].map(d=>[d.dataset.check,d]));
+  const previousCharts = new Map([...content.querySelectorAll(".latency-chart")].map(chart=>[chart.dataset.check,chart]));
+  const previousCards = new Map([...content.querySelectorAll(".check-card")].map(card=>[card.dataset.check,card]));
+  if (resource) {
+    updateChildren(content, [node("a",{href:"#",class:"back-link"},"← All resources"),resourceCard(resource,true),...resource.checks.map(c=>checkCard(c,previousDetails.get(c.id),previousCharts.get(c.id),previousCards.get(c.id)))]);
+  } else if (!resources.length) {
+    content.replaceChildren(node("div",{class:"empty"},node("div",{class:"symbol","aria-hidden":"true"},"◎"),node("h2",{},"Nothing to monitor. Yet."),node("p",{},"Add a resource and its first check. Connectivity will start observing within a second. History stays in memory, and starts fresh on restart."),node("button",{class:"primary",onclick:()=>openEditor()},"＋ Add your first resource")));
+  } else {
+    const shown = orderSnapshot ? orderSnapshot.resources.map(r=>resources.find(current=>current.id===r.id)) : resources.filter(r=>r.name.toLowerCase().includes($("name-filter").value.toLowerCase()) && (!$("state-filter").value || r.state===$("state-filter").value));
+    content.replaceChildren(...shown.map(r=>resourceCard(r)));
+    if (!shown.length) content.append(node("div",{class:"empty"},node("h2",{},"No matching resources"),node("p",{},"Try another name or current-state filter.")));
+  }
+}
+function field(label, name, value, options={}) {
+  const input = node("input",{name,value:value??"",required:true,...options});
+  return node("label",{},label,input);
+}
+function updateCheckPositions() {
+  const items = [...$("check-fields").children];
+  items.forEach((item,index)=>item.querySelector(".order-position").textContent=`Check ${index+1} of ${items.length}`);
+  $("reorder-checks").disabled = items.length < 2;
+}
+function startCheckOrder() {
+  if (checkDrag || $("save-resource").disabled || $("check-fields").children.length < 2) return;
+  checkOrderStart = [...$("check-fields").children];
+  checkDrag = DragOrder.attach($("check-fields"), {
+    name:item=>`check ${item.querySelector('input[name="name"]').value.trim() || "Unnamed check"}`,
+    announce:text=>$("check-order-status").textContent=text,
+    changed:updateCheckPositions,
+  });
+  $("reorder-checks").hidden = true;
+  for (const id of ["done-check-order","cancel-check-order","check-order-help"]) $(id).hidden=false;
+  $("add-check").disabled=true;
+  $("check-fields").querySelectorAll(".remove-check").forEach(button=>button.disabled=true);
+}
+function endCheckOrder(cancel) {
+  checkDrag?.destroy();checkDrag=null;
+  if (cancel && checkOrderStart) checkOrderStart.forEach(item=>$("check-fields").append(item));
+  checkOrderStart=null;
+  $("reorder-checks").hidden=false;
+  for (const id of ["done-check-order","cancel-check-order","check-order-help"]) $(id).hidden=true;
+  $("add-check").disabled=false;
+  $("check-fields").querySelectorAll(".remove-check").forEach(button=>button.disabled=false);
+  updateCheckPositions();
+  $("check-order-status").textContent=cancel?"Starting order restored. Field edits kept.":"";
+}
+function endResourceOrder() {
+  orderRequest++;orderLoading=false;
+  resourceDrag?.destroy();resourceDrag=null;orderSnapshot=null;
+  $("resource-order-panel").hidden=true;
+  render();
+}
+async function openResourceOrder() {
+  if (orderLoading || orderSaving) return;
+  const request=++orderRequest;
+  orderLoading=true;$("reorder-resources").disabled=true;
+  try {
+    const snapshot = await api("/config");
+    if (request!==orderRequest || detailId() || orderSaving || !csrf) return;
+    if (!statusData || snapshot.revision !== statusData.config_revision) {
+      const current=await api("/status"),range=getRange(current);
+      const historical=await api(`/history?${new URLSearchParams({...range,max_points:600})}`);
+      if (snapshot.revision!==current.config_revision || current.config_revision!==historical.config_revision) throw new Error("Configuration changed while opening reorder mode. Try again.");
+      if (request!==orderRequest || detailId() || !csrf) return;
+      statusData=current;historyData=historical;lastRange=range;
+    }
+    if (snapshot.resources.length < 2) {endResourceOrder();refresh();return;}
+    resourceDrag?.destroy();resourceDrag=null;orderSnapshot=snapshot;
+    $("resource-order-status").textContent = "";
+    $("resource-order-error").textContent = "";
+    $("reload-resource-order").hidden = true;
+    render();
+    resourceDrag=DragOrder.attach($("content"), {
+      name:item=>`resource ${item.querySelector(".resource-name").textContent}`,
+      announce:text=>$("resource-order-status").textContent=text,
+    });
+    $("save-resource-order").disabled=snapshot.resources.length<2;
+  } catch (error) {
+    if (request!==orderRequest) return;
+    if (orderSnapshot) $("resource-order-error").textContent = error.message;
+    else if (csrf) setStale(error.message);
+  } finally {
+    if (request===orderRequest) {orderLoading=false;$("reorder-resources").disabled=(statusData?.resources.length||0)<2;}
+  }
+}
+function addCheckFields(check = null) {
+  const c = check || {id:id("check"),name:"",type:"http",interval_seconds:30,timeout_seconds:5};
+  const box = node("fieldset",{class:"check-fields","data-id":c.id},node("legend",{class:"order-position"},"Check"));
+  const type = node("select",{name:"type",disabled:Boolean(check)});
+  ["http","ping","tcp","tls"].forEach(t=>type.append(node("option",{value:t,selected:t===c.type},t.toUpperCase())));
+  const targets = node("div",{class:"target-fields wide"});
+  function targetsForType() {
+    targets.replaceChildren();
+    if (type.value === "http") {
+      targets.append(field("URL","url",c.url||"",{type:"url",placeholder:"https://service.example/",maxlength:2048,class:""}));
+      const method=node("select",{name:"method"});["GET","HEAD","POST","PUT","PATCH","DELETE","OPTIONS"].forEach(m=>method.append(node("option",{value:m,selected:m===(c.method||"GET")},m)));
+      targets.append(node("label",{},"Method",method),field("Expected status","expected_status",c.expected_status??200,{type:"number",min:200,max:599,step:1}));
+      const warning=node("p",{class:"warning wide"},"Side-effect warning: POST, PUT, PATCH, and DELETE can modify the target even with an empty request body. Use only targets you intend to call repeatedly.");
+      const update=()=>warning.hidden=!["POST","PUT","PATCH","DELETE"].includes(method.value);method.addEventListener("change",update);update();targets.append(warning);
+    } else {
+      targets.append(field("Host (DNS name or IP)","host",c.host||"",{maxlength:253,placeholder:"192.168.1.1 or service.example"}));
+      if(type.value!=="ping")targets.append(field("Port","port",c.port??(type.value==="tls"?443:""),{type:"number",min:1,max:65535,step:1}));
+    }
+  }
+  type.addEventListener("change",targetsForType);targetsForType();
+  box.append(field("Check name","name",c.name,{maxlength:100,oninput:()=>checkDrag?.refresh()}),node("label",{},"Type (immutable after creation)",type),targets,field("Interval, seconds","interval_seconds",c.interval_seconds,{type:"number",min:1,max:86400,step:"any"}),field("Total timeout, seconds","timeout_seconds",c.timeout_seconds,{type:"number",min:.1,max:300,step:"any"}),node("button",{type:"button",class:"remove-check danger wide",onclick:()=>{if($("check-fields").children.length===1){$("editor-error").textContent="A resource needs at least one check. Delete the resource instead.";return;}box.remove();updateCheckPositions();$("check-order-status").textContent="Check removed. Save to apply.";}},"Remove check"));
+  $("check-fields").append(box);
+  updateCheckPositions();
+}
+async function openEditor(rid=null) {
+  try {
+    endCheckOrder(false);
+    config=await api("/config");editSnapshot=structuredClone(config);
+    editing=config.resources.find(r=>r.id===rid)||null;
+    if(rid&&!editing)throw new Error("Resource no longer exists. Refresh the dashboard.");
+    $("editor-title").textContent=editing?"Edit resource":"Add resource";
+    $("resource-name").value=editing?.name||"";$("check-fields").replaceChildren();$("check-order-status").textContent="";
+    if(editing)editing.checks.forEach(addCheckFields);else addCheckFields();
+    $("editor-error").textContent="";$("reload-config").hidden=true;
+    $("editor").showModal();$("resource-name").focus();
+  }catch(error){setStale(error.message);}
+}
+function readResource() {
+  return {id:editing?.id||id("resource"),name:$("resource-name").value,checks:[...$("check-fields").children].map(box=>{
+    const value={id:box.dataset.id};
+    box.querySelectorAll("input,select").forEach(input=>value[input.name]=input.type==="number"?Number(input.value):input.value);
+    return value;
+  })};
+}
+async function saveConfig(candidate,snapshot) {return api("/config",{method:"PUT",headers:{"If-Match":snapshot.revision},body:JSON.stringify({resources:candidate.resources,ui:candidate.ui})});}
+function changedMeasurements(a,b) {
+  if (a.checks.length !== b.checks.length) return true;
+  const previous = new Map(a.checks.map(check => [check.id, check]));
+  return b.checks.some(check => {
+    const old = previous.get(check.id);
+    return !old || [...new Set([...Object.keys(old), ...Object.keys(check)])].some(key => key !== "name" && old[key] !== check[key]);
+  });
+}
+async function deleteResource(rid) {
+  try {
+    const snapshot=await api("/config"), resource=snapshot.resources.find(r=>r.id===rid);
+    if(!resource)return refresh();
+    if(!confirm(`Delete “${resource.name}” and all its checks? All associated history will be discarded. This cannot be undone.`))return;
+    await saveConfig({...snapshot,resources:snapshot.resources.filter(r=>r.id!==rid)},snapshot);
+    if(detailId()===rid)location.hash="";refresh();
+  }catch(error){setStale(error.message);}
+}
+$("editor-form").addEventListener("submit",async event=>{
+  event.preventDefault();if($("save-resource").disabled)return;const resource=readResource();
+  if(editing&&changedMeasurements(editing,resource)&&!confirm("Measurement/check changes permanently reset affected check history and this resource’s aggregate history. Save these changes?"))return;
+  const candidate=structuredClone(editSnapshot), index=candidate.resources.findIndex(r=>r.id===resource.id);
+  if(index<0)candidate.resources.push(resource);else candidate.resources[index]=resource;
+  $("save-resource").disabled=true;$("editor-error").textContent="";
+  checkDrag?.setDisabled(true);
+  for(const id of ["reorder-checks","done-check-order","cancel-check-order"])$(id).disabled=true;
+  try{config=await saveConfig(candidate,editSnapshot);$("editor").close();refresh();}
+  catch(error){$("editor-error").textContent=error.message;$("reload-config").hidden=![409,412].includes(error.status);}
+  finally{$("save-resource").disabled=false;checkDrag?.setDisabled(false);for(const id of ["done-check-order","cancel-check-order"])$(id).disabled=false;updateCheckPositions();}
+});
+$("reload-config").addEventListener("click",()=>{if(confirm("Reload the saved configuration? Unsaved form changes will be discarded. External file conflicts require reconciliation and a server restart.")){const rid=editing?.id;$("editor").close();openEditor(rid);}});
+$("add-check").addEventListener("click",()=>{if($("check-fields").children.length>=20){$("editor-error").textContent="At most 20 checks per resource.";return;}addCheckFields();});
+$("add-resource").addEventListener("click",()=>openEditor());
+$("reorder-resources").addEventListener("click",openResourceOrder);
+$("cancel-resource-order").addEventListener("click",()=>{if(!orderSaving){endResourceOrder();refresh();}});
+$("reload-resource-order").addEventListener("click",()=>{if(confirm("Reload the saved resource order? Unsaved ordering changes will be discarded. External file conflicts require reconciliation and a server restart."))openResourceOrder();});
+$("save-resource-order").addEventListener("click",async()=>{
+  if (orderSaving || !orderSnapshot) return;
+  resourceDrag?.setDisabled(true);
+  const resources = new Map(orderSnapshot.resources.map(resource=>[resource.id,resource]));
+  const candidate = {...orderSnapshot,resources:[...$("content").children].map(item=>resources.get(item.dataset.id))};
+  orderSaving = true;
+  $("resource-order-panel").querySelectorAll("button").forEach(button=>button.disabled=true);
+  $("resource-order-error").textContent = "";
+  try {
+    config = await saveConfig(candidate,orderSnapshot);
+    endResourceOrder();
+    refresh();
+  } catch (error) {
+    $("resource-order-error").textContent = error.message;
+    $("reload-resource-order").hidden = ![409,412].includes(error.status);
+  } finally {
+    orderSaving = false;
+    $("resource-order-panel").querySelectorAll("button").forEach(button=>button.disabled=false);
+    resourceDrag?.setDisabled(false);
+  }
+});
+$("reorder-checks").addEventListener("click",startCheckOrder);
+$("done-check-order").addEventListener("click",()=>endCheckOrder(false));
+$("cancel-check-order").addEventListener("click",()=>endCheckOrder(true));
+$("editor").addEventListener("close",()=>endCheckOrder(false));
+[$("close-editor"),$("cancel-editor")].forEach(button=>button.addEventListener("click",()=>$("editor").close()));
+$("settings").addEventListener("click",async()=>{try{settingsSnapshot=await api("/config");$("refresh-seconds").value=settingsSnapshot.ui.refresh_interval_seconds;$("settings-error").textContent="";$("settings-dialog").showModal();}catch(error){setStale(error.message);}});
+$("close-settings").addEventListener("click",()=>$("settings-dialog").close());
+$("settings-form").addEventListener("submit",async event=>{event.preventDefault();const candidate={...settingsSnapshot,ui:{refresh_interval_seconds:Number($("refresh-seconds").value)}};const button=event.submitter;button.disabled=true;try{await saveConfig(candidate,settingsSnapshot);$("settings-dialog").close();refresh();}catch(error){$("settings-error").textContent=`${error.message}${error.status===412?" Close and reopen settings to reload.":""}`;}finally{button.disabled=false;}});
+$("login-form").addEventListener("submit",async event=>{event.preventDefault();const button=event.submitter;button.disabled=true;$("login-error").textContent="";try{const data=await api("/session",{method:"POST",body:JSON.stringify({password:$("password").value})});csrf=data.csrf_token;$("password").value="";selected={seconds:3600};rememberRange();$("custom-range").hidden=true;if(!speedPage())location.hash="";showDashboard();}catch(error){$("login-error").textContent=error.message;}finally{button.disabled=false;}});
+$("logout").addEventListener("click",async()=>{try{await api("/session",{method:"DELETE",body:"{}"});showLogin();setStale(null);}catch(error){setStale(error.message);}});
+$("name-filter").addEventListener("input",render);$("state-filter").addEventListener("change",render);
+window.addEventListener("hashchange",()=>{if(orderSnapshot && (detailId()||speedPage()))endResourceOrder();navigate();});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)refresh();else clearTimeout(timer);});
+function offset(date) {const n=-date.getTimezoneOffset();return `${n<0?"-":"+"}${String(Math.floor(Math.abs(n)/60)).padStart(2,"0")}:${String(Math.abs(n)%60).padStart(2,"0")}`;}
+function localInput(date) {return new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,19);}
+$("timezone").textContent=`Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}`;
+if (location.protocol === "https:") {
+  document.querySelector(".security-note").textContent="HTTPS protects this browser connection. The owner password is stored in plaintext on the server. Use a unique password and restrict access to the server and its files.";
+  document.querySelector("#settings-dialog .warning").textContent="HTTPS protects this browser connection. The owner password remains plaintext in the configuration file. Restrict server/file access and keep this monitor on trusted networks.";
+}
+document.querySelectorAll("[data-range]").forEach(button=>button.addEventListener("click",()=>{
+  const custom=button.dataset.range==="custom";$("custom-range").hidden=!custom;
+  if(custom){const end=new Date(selected.to||statusData?.server_time||Date.now()),start=selected.from?new Date(selected.from):new Date(end-3600000);$("range-start").value=localInput(start);$("range-end").value=localInput(end);$("offset-start").value=offset(start);$("offset-end").value=offset(end);}
+  else{selected={seconds:Number(button.dataset.range)};rememberRange();refresh();}
+}));
+function parseLocal(value,zone) {
+  if(!/^[+-](?:0\d|1\d|2[0-3]):[0-5]\d$/.test(zone))throw new Error("Use an explicit UTC offset, for example +02:00 or -04:00.");
+  const date=new Date(value+zone);const expected=value.length===16?value+":00":value;
+  if(!Number.isFinite(date.getTime())||localInput(date)!==expected||offset(date)!==zone)throw new Error("That local time and offset do not exist in your browser timezone. Check the date, DST transition, and offset.");
+  return date.toISOString();
+}
+$("custom-range").addEventListener("submit",event=>{event.preventDefault();try{const from=parseLocal($("range-start").value,$("offset-start").value),to=parseLocal($("range-end").value,$("offset-end").value);if(from>=to||Date.parse(to)>Date.parse(statusData.server_time)||Date.parse(to)-Date.parse(from)>1209600000)throw new Error("Start must precede end, end cannot exceed current server time, and maximum span is 14 days.");selected={from,to};rememberRange();$("range-error").textContent="";refresh();}catch(error){$("range-error").textContent=error.message;}});
+SpeedUI.setup({api,node,id,local,csrf:()=>csrf});
+(async()=>{try{const data=await api("/session");csrf=data.csrf_token;restoreRange();showDashboard();}catch{showLogin();}})();

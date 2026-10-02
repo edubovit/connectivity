@@ -1,0 +1,10 @@
+version: 1
+server:
+  host: 127.0.0.1
+  port: 8080
+  allowed_hosts: []
+auth:
+  password: CHANGE_ME_BEFORE_STARTING
+ui:
+  refresh_interval_seconds: 15
+resources: []
