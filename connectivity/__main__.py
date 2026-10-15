@@ -43,8 +43,8 @@ def main():
     parser = argparse.ArgumentParser(description="Private connectivity monitoring; no public-internet exposure")
     parser.add_argument("--config", required=True, help="YAML file path (required); see bundled example.yml")
     args = parser.parse_args()
-    if sys.version_info[:2] != (3, 13):
-        parser.exit(1, "Connectivity requires Python 3.13.\n")
+    if sys.version_info[:2] != (3, 14):
+        parser.exit(1, "Connectivity requires Python 3.14.\n")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     store = None
     try:

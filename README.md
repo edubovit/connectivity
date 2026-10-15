@@ -17,14 +17,14 @@ One Python process. No database, frontend build, or external service.
 
 ## Run
 
-You need **Python 3.13** with pip and venv. Linux also needs `iputils-ping`; Windows and macOS use their system ping tools. Run as a regular user, not root or administrator.
+You need **Python 3.14** with pip and venv. Linux also needs `iputils-ping`; Windows and macOS use their system ping tools. Run as a regular user, not root or administrator.
 
 From a checkout, install the app and copy its example configuration:
 
 **Linux / macOS**
 
 ```sh
-python3.13 -m venv .venv
+python3.14 -m venv .venv
 .venv/bin/python -m pip install -r requirements.lock
 .venv/bin/python -m pip install --no-deps .
 mkdir -p .local
@@ -36,7 +36,7 @@ chmod 600 .local/config.yml
 **Windows PowerShell**
 
 ```powershell
-py -3.13 -m venv .venv
+py -3.14 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.lock
 .\.venv\Scripts\python.exe -m pip install --no-deps .
 New-Item -ItemType Directory -Force .local

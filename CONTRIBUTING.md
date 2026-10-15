@@ -4,12 +4,12 @@ This guide covers setup, architecture, behavioral contracts, tests, packaging, a
 
 ## Development environment
 
-Use Python **3.13**. The CLI and package metadata intentionally reject other minor versions. Node.js is optional for JavaScript tests and syntax checks; it is not a runtime dependency. Browser automation uses a separate optional Playwright environment.
+Use Python **3.14**. The CLI and package metadata intentionally reject other minor versions. Node.js is optional for JavaScript tests and syntax checks; it is not a runtime dependency. Browser automation uses a separate optional Playwright environment.
 
 Create and activate a virtual environment from the repository root:
 
 ```sh
-python3.13 -m venv .venv
+python3.14 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements-dev.lock
 python -m pip install --no-deps -e .
@@ -18,7 +18,7 @@ python -m pip install --no-deps -e .
 On Windows PowerShell:
 
 ```powershell
-py -3.13 -m venv .venv
+py -3.14 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.lock
 .\.venv\Scripts\python.exe -m pip install --no-deps -e .
 ```
@@ -217,7 +217,7 @@ Native Linux and Windows tests are available; native macOS/Safari, broader local
 
 ## Packaging and release checks
 
-Build from a clean, reviewed tree using Python3.13:
+Build from a clean, reviewed tree using Python3.14:
 
 ```sh
 python -m pip wheel --no-deps --wheel-dir .local/dist .
@@ -237,7 +237,9 @@ Before a release:
 
 ## Service deployment and maintenance
 
-Run under a dedicated unprivileged user, one process per config, with root-owned code/runtime and private service-owned state. Install Python3.13 and native locked dependencies without replacing the OS Python. Virtualenvs are not portable across machines, paths or architectures.
+Run under a dedicated unprivileged user, one process per config, with root-owned code/runtime and private service-owned state. Install Python3.14 and native locked dependencies without replacing the OS Python. Virtualenvs are not portable across machines, paths or architectures.
+
+When upgrading from Python 3.13, stop the app and recreate its virtual environment with Python 3.14, then reinstall the locked dependencies and app using the setup commands above. Keep the existing config. Do not reuse the 3.13 environment; restarting clears in-memory history and sessions.
 
 Example systemd unit (adapt paths and account before use):
 

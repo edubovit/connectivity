@@ -19,6 +19,18 @@ from .helpers import check, configuration, resource
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize("version", [(3, 13, 15), (3, 15, 0)])
+def test_cli_rejects_other_python_versions(monkeypatch, capsys, version):
+    from connectivity import __main__ as cli
+
+    monkeypatch.setattr(sys, "argv", ["connectivity", "--config", "unused.yml"])
+    monkeypatch.setattr(sys, "version_info", version)
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+    assert error.value.code == 1
+    assert capsys.readouterr().err == "Connectivity requires Python 3.14.\n"
+
+
 def launch(config, directory):
     options = {}
     if os.name == "nt":
