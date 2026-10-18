@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#10171d">
+  <meta name="theme-color" content="#f6f8fa">
   <title>Connectivity</title>
   <link rel="icon" href="static/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="static/app.css">
@@ -14,34 +14,100 @@
   <script src="static/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="#"><img src="static/icon.svg" alt="" width="30" height="30">Connectivity<span class="version">PRIVATE MONITOR</span></a><nav id="navigation" hidden><a href="#">Resources</a><a href="#speedtest">Speedtest</a><span id="live" class="live">● Live</span><button id="settings" class="quiet">Settings</button><button id="logout" class="quiet">Log out</button></nav></header>
+  <a class="skip-link" href="#dashboard">Skip to content</a>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="Connectivity home"><img src="static/icon.svg" alt="" width="30" height="30">Connectivity</a>
+    <nav id="navigation" aria-label="Main navigation" hidden>
+      <a id="nav-resources" href="#">Resources</a>
+      <a id="nav-speedtest" href="#speedtest">Speedtest</a>
+      <button id="settings" class="quiet">Settings</button>
+      <button id="logout" class="quiet">Log out</button>
+    </nav>
+  </header>
   <div id="banner" class="banner" role="alert" hidden></div>
+
   <main id="login" class="login" hidden>
-    <div class="eyebrow">YOUR NETWORK, FROM HERE</div><h1>A clear view of<br>your connections.</h1><p class="muted">Private monitoring. One host. No guesswork.</p>
-    <form id="login-form" class="login-card"><h2>Sign in</h2><label for="password">Owner password</label><input id="password" type="password" autocomplete="current-password" required maxlength="1024" autofocus><p id="login-error" class="error" role="alert"></p><button class="primary" type="submit">Open dashboard <span aria-hidden="true">↗</span></button><p class="security-note">Private networks only. HTTP does not encrypt your password or session. Use a unique password; never expose this app publicly.</p></form>
+    <div class="login-intro"><span class="eyebrow">Your network, from here</span><h1>Keep an eye<br>on your connections.</h1><p>Reachability, latency, and speed.<br>All in one private dashboard.</p></div>
+    <form id="login-form" class="login-card">
+      <h2>Sign in</h2>
+      <label for="password">Owner password</label>
+      <input id="password" type="password" autocomplete="current-password" required maxlength="1024" autofocus>
+      <p id="login-error" class="error" role="alert"></p>
+      <button class="primary" type="submit">Sign in</button>
+      <p class="security-note">Private networks only. HTTP does not encrypt your password or session.</p>
+    </form>
   </main>
-  <main id="dashboard" hidden>
-    <section class="page-heading"><div><div class="eyebrow">NETWORK OBSERVATORY</div><h1 id="page-title">Resources</h1><p id="page-subtitle" class="muted">Reachability from this machine. Not a global availability guarantee.</p></div><div class="heading-actions"><button id="reorder-resources" disabled>Reorder resources</button><button id="add-resource" class="primary">＋ Add resource</button></div></section>
-    <div id="health"></div>
+
+  <main id="dashboard" class="workspace" tabindex="-1" hidden>
+    <section class="page-heading">
+      <div><a id="back-resources" class="back-link" href="#" hidden>← Resources</a><h1 id="page-title">Resources</h1><p id="page-subtitle">Reachability from this node.</p></div>
+      <div class="heading-actions"><span id="live" class="live" role="status">Connecting</span><button id="reorder-resources" disabled>Reorder</button><button id="add-resource" class="primary">Add resource</button></div>
+    </section>
     <section id="summary" class="summary" aria-label="Current resource totals"></section>
-    <section class="toolbar" aria-label="History controls"><div class="range-buttons" id="range-buttons"><button data-range="3600" class="selected">1 hour</button><button data-range="86400">24 hours</button><button data-range="1209600">14 days</button><button data-range="custom">Custom</button></div><span class="timezone" id="timezone"></span><span class="range-label" id="range-label"></span></section>
-    <form id="custom-range" class="custom-range" hidden><label>Start, local time<input id="range-start" type="datetime-local" step="1" required></label><label>UTC offset<input id="offset-start" placeholder="+02:00" pattern="[+\-][0-9]{2}:[0-9]{2}" required></label><label>End, local time<input id="range-end" type="datetime-local" step="1" required></label><label>UTC offset<input id="offset-end" placeholder="+02:00" pattern="[+\-][0-9]{2}:[0-9]{2}" required></label><button type="submit">Apply range</button><p class="muted">Use the offset for each date. During a repeated DST hour, choose which offset you mean. Nonexistent local times are rejected.</p><p id="range-error" class="error" role="alert"></p></form>
-    <div class="content-controls"><div id="filters" class="filters"><label class="search-label">Filter resources<input id="name-filter" type="search" placeholder="Search by name…"></label><label>Current state<select id="state-filter"><option value="">All states</option><option>online</option><option>offline</option><option>unknown</option></select></label></div><div class="legend"><span class="online-dot">● Online</span><span class="offline-dot">● Offline</span><span class="unknown-dot">● Unknown</span></div></div>
-    <p class="timeline-hint">Timeline blocks: any downtime → offline; otherwise any unobserved time → unknown; otherwise online. Hover for actual durations. Availability uses durations, not block colors.</p>
-    <section id="resource-order-panel" class="order-panel" hidden aria-label="Resource reordering"><p>Drag a four-arrow handle to move a resource. Keyboard: Space to pick up, arrows or Home/End to move, Space to drop, Escape to undo a move. All resources are shown; filters and card readings stay fixed while arranging. Monitoring continues.</p><div class="order-actions"><button id="save-resource-order" class="primary">Save order</button><button id="cancel-resource-order">Cancel</button><button id="reload-resource-order" hidden>Reload resource order</button></div><p id="resource-order-status" class="order-status" role="status"></p><p id="resource-order-error" class="error" role="alert"></p></section>
-    <section id="content" aria-live="polite"></section>
-    <footer><span>Memory-only history · 1 hour raw / 14 days minute summaries</span><span id="updated">Waiting for observations</span></footer>
+    <section class="toolbar" aria-label="Filters and history range">
+      <div id="filters" class="filters">
+        <label class="search-label"><span class="sr-only">Filter resources</span><input id="name-filter" type="search" placeholder="Find a resource…"></label>
+        <label><span class="sr-only">Current state</span><select id="state-filter"><option value="">All states</option><option value="online">Online</option><option value="offline">Offline</option><option value="unknown">Unknown</option></select></label>
+      </div>
+      <div class="range-buttons" id="range-buttons" role="group" aria-label="History range"><button data-range="3600" class="selected" aria-pressed="true">1 hour</button><button data-range="86400" aria-pressed="false">24 hours</button><button data-range="1209600" aria-pressed="false">14 days</button><button data-range="custom" aria-pressed="false">Custom</button></div>
+    </section>
+    <form id="custom-range" class="custom-range" hidden>
+      <label>Start, local time<input id="range-start" type="datetime-local" step="1" required></label><label>UTC offset<input id="offset-start" placeholder="+02:00" pattern="[+\-][0-9]{2}:[0-9]{2}" required></label>
+      <label>End, local time<input id="range-end" type="datetime-local" step="1" required></label><label>UTC offset<input id="offset-end" placeholder="+02:00" pattern="[+\-][0-9]{2}:[0-9]{2}" required></label>
+      <button type="submit">Apply</button><p id="range-error" class="error wide" role="alert"></p>
+    </form>
+    <div class="range-meta"><span id="range-label"></span><details class="help"><summary>About this view</summary><div class="help-body"><p id="timezone"></p><p>Current status is live. The selected range applies to history only.</p><p>Availability excludes unknown time. Coverage is the share of time observed.</p><p>Timeline: any downtime is red; otherwise unobserved time is gray; otherwise green. Inspect a block for durations.</p><p>One hour of raw results; fourteen days of minute summaries. Restarting clears history and sessions.</p><p>Custom times use your browser’s timezone. Enter the correct UTC offset for each date, including DST.</p></div></details></div>
+    <section id="resource-order-panel" class="order-panel" hidden aria-label="Resource reordering">
+      <div class="order-heading"><strong>Reorder resources</strong><div class="order-actions"><button id="cancel-resource-order">Cancel</button><button id="reload-resource-order" hidden>Reload saved order</button><button id="save-resource-order" class="primary">Save order</button></div></div>
+      <p>Drag a handle, or focus it and use the arrow keys. Escape undoes a picked-up move.</p><p id="resource-order-status" class="order-status" role="status"></p><p id="resource-order-error" class="error" role="alert"></p>
+    </section>
+    <section id="content" aria-label="Monitoring results"></section>
+    <footer class="workspace-footer"><span id="updated">Waiting for observations</span><details id="monitor-health"><summary>Monitor health</summary><div id="health"></div></details></footer>
   </main>
-  <dialog id="editor"><form id="editor-form"><div class="dialog-heading"><div><div class="eyebrow">CONFIGURATION</div><h2 id="editor-title">Add resource</h2></div><button type="button" id="close-editor" class="quiet" aria-label="Close editor">✕</button></div><label>Resource name<input id="resource-name" required maxlength="100"></label><p class="muted">Each check has its own target. All checks must pass for this resource to be online. Reordering keeps history and scheduling.</p><div class="order-actions"><button type="button" id="reorder-checks">Reorder checks</button><button type="button" id="done-check-order" hidden>Done reordering</button><button type="button" id="cancel-check-order" hidden>Cancel reordering</button></div><p id="check-order-help" class="muted" hidden>Drag a four-arrow handle to move a check. Keyboard: Space to pick up, arrows or Home/End to move, Space to drop, Escape to undo a move. Done keeps the draft order; Save resource persists it. Cancel reordering restores the starting order without discarding field edits.</p><div id="check-fields"></div><p id="check-order-status" class="order-status" role="status"></p><button type="button" id="add-check">＋ Add check</button><p class="warning">Changing targets, timing, or expected results clears the affected check’s history and this resource’s aggregate history. Renames and reordering keep history.</p><p id="editor-error" class="error" role="alert"></p><button type="button" id="reload-config" hidden>Reload configuration</button><div class="dialog-actions"><button type="button" id="cancel-editor">Cancel</button><button type="submit" class="primary" id="save-resource">Save resource</button></div></form></dialog>
-  <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>Dashboard settings</h2><button type="button" id="close-settings" class="quiet" aria-label="Close settings">✕</button></div><label>Live refresh interval, seconds<input id="refresh-seconds" type="number" min="1" max="300" step="1" required></label><p class="muted">Global setting, saved to YAML. Other tabs pick it up on their next refresh. This does not change probe intervals or history.</p><p class="warning">HTTP is unencrypted. The owner password is stored in plaintext in the configuration file. Keep this app on a trusted private network and restrict file access.</p><p id="settings-error" class="error" role="alert"></p><div class="dialog-actions"><button type="submit" class="primary">Save settings</button></div></form></dialog>
-  <main id="speedtest" hidden>
-    <section class="page-heading"><div><div class="eyebrow">ON-DEMAND NETWORK MEASUREMENT</div><h1>Speedtest</h1><p class="muted">Receiver-measured throughput. Four streams. Ten seconds per direction.</p></div><button id="speed-configure">Configure peers</button></section>
-    <div class="speed-controls"><div class="range-buttons"><button data-speed-mode="browser" class="selected">Browser → this node</button><button data-speed-mode="node">This node → peer</button></div><label id="speed-peer-select" hidden>Configured peer<select id="speed-peer"></select></label><div class="order-actions"><button id="speed-start" class="primary">Start test</button><button id="speed-cancel" class="danger" hidden>Cancel test</button></div></div>
-    <p id="speed-direction" class="muted"></p><p class="warning">Tests can saturate the link and transfer gigabytes. No byte quota. Results include endpoint/browser/proxy limits, not a guaranteed ISP line rate. Ordinary monitoring continues unchanged.</p><p id="speed-http-warning" class="warning" hidden>This peer uses HTTP: its full-access password, session, and test traffic are unencrypted. Use only on trusted networks.</p>
-    <p id="speed-error" class="error" role="alert"></p><p id="speed-action-error" class="error" role="alert"></p><div id="speed-activity" class="notice" role="status"></div><progress id="speed-progress" max="10" value="0" aria-label="Measured phase progress" hidden></progress><p id="speed-live" class="muted"></p>
-    <h2 id="speed-result-heading">No result yet</h2><p id="speed-result-error" class="error" role="alert"></p><section id="speed-metrics" class="speed-metrics" aria-label="Latest test metrics"></section><section id="speed-charts" class="speed-charts"></section><p id="speed-payload" class="precision"></p>
-    <h2 class="speed-peers-heading">Configured peers · latest attempts</h2><div id="speed-peer-results"></div>
+
+  <dialog id="editor" aria-labelledby="editor-title">
+    <form id="editor-form">
+      <div class="dialog-heading"><h2 id="editor-title">Add resource</h2><button type="button" id="close-editor" class="icon-button" aria-label="Close resource editor">×</button></div>
+      <div class="dialog-body">
+        <label>Resource name<input id="resource-name" required maxlength="100" autocomplete="off"></label>
+        <div class="section-heading"><h3>Checks</h3><div class="order-actions"><button type="button" id="reorder-checks" class="quiet">Reorder checks</button><button type="button" id="done-check-order" hidden>Done</button><button type="button" id="cancel-check-order" hidden>Undo order</button></div></div>
+        <p id="check-order-help" class="muted" hidden>Drag a handle or use arrow keys. Done keeps the draft; Save applies it.</p>
+        <div id="check-fields"></div><p id="check-order-status" class="order-status" role="status"></p><button type="button" id="add-check">Add check</button>
+        <p class="form-note">All checks must pass for a resource to be online. Measurement changes reset affected history; names and order do not.</p>
+        <p id="editor-error" class="error" role="alert"></p><button type="button" id="reload-config" hidden>Reload saved configuration</button>
+      </div>
+      <div class="dialog-actions"><button type="button" id="delete-resource" class="danger quiet" aria-label="Delete resource" hidden>Delete</button><span class="spacer"></span><button type="button" id="cancel-editor">Cancel</button><button type="submit" class="primary" id="save-resource">Save resource</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="settings-dialog" class="small-dialog" aria-labelledby="settings-title">
+    <form id="settings-form">
+      <div class="dialog-heading"><h2 id="settings-title">Settings</h2><button type="button" id="close-settings" class="icon-button" aria-label="Close settings">×</button></div>
+      <div class="dialog-body"><label>Refresh interval (seconds)<input id="refresh-seconds" type="number" min="1" max="300" step="1" required></label><p class="form-note">Applies to all dashboards. Probe intervals stay unchanged.</p>
+        <details><summary>Storage & security</summary><p>History and sessions live in memory and are cleared on restart. Settings are saved to YAML.</p><p class="warning">HTTP is unencrypted. Passwords are stored in plaintext in the configuration file. Restrict network and file access.</p></details>
+        <p id="settings-error" class="error" role="alert"></p>
+      </div><div class="dialog-actions"><button type="submit" class="primary">Save settings</button></div>
+    </form>
+  </dialog>
+
+  <main id="speedtest" class="workspace" tabindex="-1" hidden>
+    <section class="page-heading"><div><h1>Speedtest</h1><p>Measure the connection between two endpoints.</p></div><button id="speed-configure">Configure peers</button></section>
+    <section class="speed-controls panel" aria-label="Test controls">
+      <div class="speed-selection"><div class="range-buttons" role="group" aria-label="Test mode"><button data-speed-mode="browser" class="selected" aria-pressed="true">This browser</button><button data-speed-mode="node" aria-pressed="false">Node to peer</button></div><label id="speed-peer-select" hidden><span class="sr-only">Peer</span><select id="speed-peer"></select></label><div class="order-actions"><button id="speed-start" class="primary">Start test</button><button id="speed-cancel" class="danger" hidden>Cancel test</button></div></div>
+      <p id="speed-direction" class="muted"></p><p class="transfer-warning">Uses full bandwidth and may transfer gigabytes.</p><p id="speed-http-warning" class="warning" hidden>This peer uses HTTP. Its full-access password and traffic are unencrypted.</p>
+      <p id="speed-error" class="error" role="alert"></p><p id="speed-action-error" class="error" role="alert"></p>
+    </section>
+    <div class="speed-status"><span id="speed-activity" role="status"></span><span id="speed-live"></span></div><progress id="speed-progress" max="10" value="0" aria-label="Measured phase progress" hidden></progress>
+    <section class="speed-result" aria-label="Test result"><h2 id="speed-result-heading">No result yet</h2><p id="speed-result-error" class="error" role="alert"></p><div id="speed-metrics" class="speed-metrics"></div></section>
+    <details id="speed-details" class="panel"><summary>Measurement details</summary><div id="speed-charts" class="speed-charts"></div><div id="speed-statistics" class="speed-statistics"></div><p id="speed-payload" class="form-note"></p><p class="form-note">Four streams · 2 s warm-up + 10 s per direction. Throughput is receiver-measured; latency is application RTT, not ICMP. Endpoint, browser, and proxy limits affect results. Monitoring continues during tests.</p></details>
+    <section class="peer-results"><div class="section-heading"><h2>Peers</h2><span class="muted">Latest attempts</span></div><div id="speed-peer-results"></div></section>
   </main>
-  <dialog id="peers-dialog" aria-labelledby="peers-title"><form id="peer-form"><div class="dialog-heading"><h2 id="peers-title">Speedtest peers</h2><button id="peer-close" type="button" class="quiet" aria-label="Close peers">✕</button></div><p class="warning">Peer passwords grant full owner access and are stored in the restricted YAML. They are never returned by read APIs. HTTP exposes them in transit. Re-enter the password when changing a URL. Changes clear that peer’s latest result; cancel its active test before editing its target or deleting it.</p><div id="peer-fields"></div><button id="peer-add" type="button">＋ Add peer</button><p id="peer-error" class="error" role="alert"></p><button id="peer-reload" type="button" hidden>Reload peers</button><div class="dialog-actions"><button id="peer-cancel" type="button">Cancel</button><button class="primary" type="submit">Save peers</button></div></form></dialog>
+
+  <dialog id="peers-dialog" aria-labelledby="peers-title">
+    <form id="peer-form"><div class="dialog-heading"><h2 id="peers-title">Speedtest peers</h2><button id="peer-close" type="button" class="icon-button" aria-label="Close peers">×</button></div><div class="dialog-body">
+      <p class="warning">Peer passwords grant full owner access and are saved in plaintext. Use trusted nodes only.</p><div id="peer-fields"></div><button id="peer-add" type="button">Add peer</button>
+      <p class="form-note">Changing a URL requires its password again. Target changes clear the latest result; cancel active tests before changing or deleting their peer.</p><p id="peer-error" class="error" role="alert"></p><button id="peer-reload" type="button" hidden>Reload saved peers</button>
+    </div><div class="dialog-actions"><button id="peer-cancel" type="button">Cancel</button><button class="primary" type="submit">Save peers</button></div></form>
+  </dialog>
 </body>
 </html>

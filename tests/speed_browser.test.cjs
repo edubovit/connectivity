@@ -104,3 +104,25 @@ test("rejected cancellation clears the local cancellation intent",async()=>{
     assert.equal(run.aborted,false);
   }finally{clearTimeout(run.deadline);}
 });
+
+test("heartbeat handles a terminal control failure without an uncaught timer error",async t=>{
+  let heartbeat;
+  t.mock.method(global,"setInterval",callback=>{heartbeat=callback;return 0;});
+  const channel={check(){},send(){},close(){}};
+  const run=new Runner({id:"test",started_at:new Date().toISOString(),profile:PROFILE,metrics:{}},async()=>{},"test-csrf",()=>{});
+  run.connect=async()=>channel;
+  const execution=run.execute();
+  try{
+    await Promise.resolve();
+    const cancelled=Object.assign(new Error("Test canceled"),{code:"cancelled"});
+    run.control.failure=cancelled;
+    assert.doesNotThrow(()=>heartbeat());
+    await Promise.resolve();
+    assert.equal(run.control.failure,cancelled);
+  }finally{
+    run.control.close();
+    await execution;
+  }
+  assert.equal(run.result.outcome,"cancelled");
+  assert.equal(run.active,false);
+});

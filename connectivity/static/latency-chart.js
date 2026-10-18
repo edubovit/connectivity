@@ -88,7 +88,7 @@ const LatencyCharts = (() => {
     for (const [kind, label] of [["mean", "● Mean"], ["envelope", "↕ Min–max"], ["failure", "│ Failures"], ["error", "│ Monitor errors"]]) {
       legend.append(element("span", `latency-key-${kind}`, label));
     }
-    const instructions = element("p", "latency-instructions", "Each dot is the mean of successful samples in a time window. Hover or tap to inspect; focus the plot and use ← / →, Home / End. Escape closes details. Gaps have no successful latency samples.");
+    const instructions = element("p", "latency-instructions", "Hover, tap, or use arrow keys to inspect. Gaps mean no successful samples.");
     instructions.id = `latency-help-${check.id}`;
     const axes = element("div", "latency-axes");
     const unit = element("div", "latency-unit", "Latency (ms)");
@@ -214,7 +214,7 @@ const LatencyCharts = (() => {
       const valid = points.filter(hasSample);
       axis = scale(Math.max(0, ...valid.map(point => point.latency_max_ms)));
       const paths = geometry(points, axis.maximum);
-      heading.textContent = `${currentCheck.metric} · successful latency${series.latency.approximate ? " · approximate upper-bound samples included" : ""}`;
+      heading.textContent = `Latency${series.latency.approximate ? " · includes approximate upper bounds" : ""}`;
       plot.setAttribute("aria-label", `${currentCheck.name}: ${currentCheck.metric}, milliseconds over time`);
       plot.setAttribute("aria-valuemax", String(Math.max(0, points.length - 1)));
       if (!mode) {

@@ -186,6 +186,18 @@ python tools/speedtest_browser_check.py --url http://127.0.0.1:18090/ --browsers
 
 Here `python` must be the browser environment's interpreter. The explicit URL matches the fixture above; do not rely on the browser checker's different default port. An optional `CONNECTIVITY_TEST_PASSWORD` environment variable overrides the fake fixture password. Only target authorized test nodes: this checker runs full transfers and can move gigabytes.
 
+Full UI regression suite (use the browser environment's interpreter):
+
+```sh
+python tools/ui_browser_check.py
+```
+
+Install Chromium as well as Firefox and WebKit for this suite. It starts and stops its own isolated loopback fixtures using `.venv` (override with `--python PATH`), never a production config. It covers login/session loss, all probe editors, filters, history ranges and DST validation, keyboard/pointer reordering, conflicts and failed saves, chart inspection, raw pagination, mobile layouts, peer credentials, cancellation, and full browser/node transfers. Immediate cancellation uses a pointer click; mid-transfer cancellation clicks the UI button from inside the page for deterministic phase timing under full loopback load. Full transfers can move gigabytes locally; `--skip-transfers` omits completed-transfer checks for a quick UI run. `--browsers chromium` selects one engine.
+
+Screenshots and the JSON report go to `.local/ui-browser/`. Prefix-mode browser checks intercept an HTTPS origin and forward requests and the origin's browser cookie jar to a real loopback backend, verifying relative assets, navigation, cookie flags and APIs without changing system trust. WebKit interception does not expose its outgoing Cookie header, so the bridge supplies cookies explicitly. This is not a real TLS termination/nginx test. The suite also checks accessible control names, text size and page overflow; it is not a complete accessibility audit or a native mobile/Safari test.
+
+The UI keeps diagnostic metadata and raw executions under each check's expandable sections. Check editors expand individually; reordering collapses them without discarding drafts. Keep expanded diagnostic panels, focused charts and loaded execution snapshots stable across polling. Do not hide errors or turn unknown/partial measurements into successful values to simplify the display.
+
 Manual browser checklist for UI changes:
 
 - Login/logout, stale/expired sessions, keyboard and mobile/touch layout; no script errors, secrets or third-party asset requests.

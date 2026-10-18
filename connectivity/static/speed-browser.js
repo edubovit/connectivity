@@ -76,7 +76,7 @@ const SpeedBrowser = (() => {
       this.heartbeat=setInterval(()=>{this.call("keepalive",{},2000).catch(error=>this.failure ||= error);},1000);
     }
     check(){if(this.failure)throw this.failure;this.channel.check();}
-    call(op,data={},timeout=3000) {
+    async call(op,data={},timeout=3000) {
       this.check();if(this.pending.size>=8)throw failure("protocol_error","Too many control operations");
       const id=++this.sequence;
       return new Promise((resolve,reject)=>{

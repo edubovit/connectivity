@@ -39,8 +39,8 @@ async def main(args):
         fixture = web.Application(); fixture.router.add_route("*", "/{tail:.*}", http)
         fixtures = web.AppRunner(fixture, access_log=None)
         await fixtures.setup()
-        await web.TCPSite(fixtures, "127.0.0.1", 8091).start()
-        await web.TCPSite(fixtures, "127.0.0.1", 8092, ssl_context=certs.context()).start()
+        await web.TCPSite(fixtures, "127.0.0.1", args.http_port).start()
+        await web.TCPSite(fixtures, "127.0.0.1", args.tls_port, ssl_context=certs.context()).start()
         store = ConfigStore(path)
         engine = Engine(store.data)
         certs.trust(engine.probes.tls_context)
@@ -48,7 +48,7 @@ async def main(args):
         try:
             await runner.setup()
             await web.TCPSite(runner, "127.0.0.1", args.port).start()
-            print(f"Browser fixture http://127.0.0.1:{args.port}; password test-only-password; HTTP :8091, trusted fixture TLS :8092", flush=True)
+            print(f"Browser fixture http://127.0.0.1:{args.port}; password test-only-password; HTTP :{args.http_port}, trusted fixture TLS :{args.tls_port}", flush=True)
             await stop.wait()
         finally:
             await runner.cleanup(); await fixtures.cleanup(); store.close()
@@ -58,4 +58,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=".local/browser.yml")
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--http-port", type=int, default=8091)
+    parser.add_argument("--tls-port", type=int, default=8092)
     asyncio.run(main(parser.parse_args()))
