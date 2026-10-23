@@ -118,6 +118,23 @@ async def layout(page):
       return {overflow,unnamed,tiny,wrappedMetrics};
     }""")
     assert issues == {"overflow": False, "unnamed": [], "tiny": [], "wrappedMetrics": []}, issues
+    assert await page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "dark"
+    timelines = await page.locator(".timeline:visible").evaluate_all("""elements => elements.map(element => {
+      const card = element.closest('article'), box = card.getBoundingClientRect(), style = getComputedStyle(card);
+      const bar = element.querySelector('svg').getBoundingClientRect();
+      const ticks = [...element.querySelectorAll('.timeline-labels time')];
+      const labels = ticks.map(e=>e.getBoundingClientRect());
+      const times = ticks.map(e=>Date.parse(e.dateTime));
+      return {
+        fullWidth: Math.abs(bar.left-box.left-parseFloat(style.paddingLeft)-parseFloat(style.borderLeftWidth))<1 &&
+          Math.abs(box.right-bar.right-parseFloat(style.paddingRight)-parseFloat(style.borderRightWidth))<1,
+        marks: ticks.length===3 && times[0]<times[1] && times[1]<times[2] && Math.abs(times[1]-(times[0]+times[2])/2)<=1,
+        aligned: labels.length===3 && Math.abs(labels[0].left-bar.left)<1 && Math.abs(labels[2].right-bar.right)<1 &&
+          Math.abs((labels[1].left+labels[1].right-bar.left-bar.right)/2)<1,
+        accessible: ticks.every(e=>e.title && e.getAttribute('aria-label')===e.title)
+      };
+    })""")
+    assert all(all(check.values()) for check in timelines), timelines
 
 
 async def fill_check(page, index, name, kind, fixture):
@@ -164,13 +181,22 @@ async def run_browser(browser_type, args, primary, peer, report):
     try:
         await page.goto(url)
         await expect(page.locator("#login")).to_be_visible()
+        await page.emulate_media(color_scheme="light", reduced_motion="reduce")
         await snapshot("login")
+        await page.set_viewport_size({"width": 320, "height": 844})
+        await snapshot("login-mobile")
+        await page.set_viewport_size({"width": 1440, "height": 1000})
         await page.locator("#password").fill("wrong-password")
         await page.locator("#login-form button").click()
         await expect(page.locator("#login-error")).to_contain_text("Invalid password")
         await page.locator("#password").fill(PASSWORD)
         await page.locator("#login-form button").click()
         await expect(page.locator("#content")).to_contain_text("No resources yet")
+        await page.locator(".skip-link").focus()
+        await expect(page.locator(".skip-link")).to_have_css("clip-path", "none")
+        await page.locator(".skip-link").press("Enter")
+        await expect(page.locator("#dashboard")).to_be_focused()
+        await expect(page.locator(".skip-link")).to_have_css("clip-path", "inset(50%)")
         assert await page.evaluate("[percent(null),percent(0),percent(1),percent(.9999999),percent(.0000001)]") == ["N/A", "0%", "100%", "<100%", "<0.01%"]
         await snapshot("empty")
         await passed("login rejection, authentication, empty state")
@@ -209,6 +235,7 @@ async def run_browser(browser_type, args, primary, peer, report):
         await expect(page.locator(".resource-card")).to_have_count(2)
         await expect(page.locator(".resource-card .badge.offline")).to_have_count(1)
         await snapshot("overview")
+        await passed("dark theme regardless of OS preference, full-width timelines and three aligned time marks")
         await page.locator("#name-filter").fill("office")
         await expect(page.locator(".resource-card")).to_have_count(1)
         await page.locator("#name-filter").fill("not here")
@@ -266,6 +293,15 @@ async def run_browser(browser_type, args, primary, peer, report):
         await expect(card.locator(".diagnostics")).to_have_attribute("open", "")
         plot = card.locator(".latency-plot")
         await plot.focus()
+        await expect(card.locator(".latency-tooltip-mean")).to_be_visible()
+        assert (await card.locator(".latency-tooltip").bounding_box())["height"] < 180
+        await snapshot("tooltip-sample")
+        await plot.press("Home")
+        await expect(card.locator(".latency-tooltip-samples")).to_have_text("No observations")
+        await expect(card.locator(".latency-tooltip-stats")).not_to_be_visible()
+        await expect(card.locator(".latency-tooltip-counts")).not_to_be_visible()
+        assert (await card.locator(".latency-tooltip").bounding_box())["height"] < 110
+        await snapshot("tooltip-empty")
         await plot.press("End")
         await expect(card.locator(".latency-tooltip")).to_be_visible()
         await expect(plot).to_be_focused()
@@ -297,6 +333,7 @@ async def run_browser(browser_type, args, primary, peer, report):
         for seconds in (86400, 1209600, 3600):
             await page.locator(f'[data-range="{seconds}"]').click()
             await expect(page.locator(f'[data-range="{seconds}"]')).to_have_attribute("aria-pressed", "true")
+            await snapshot(f"details-{seconds}")
         await page.locator('[data-range="custom"]').click()
         await page.locator('#custom-range button').click()
         await expect(page.locator('[data-range="custom"]')).to_have_attribute("aria-pressed", "true")
@@ -359,16 +396,29 @@ async def run_browser(browser_type, args, primary, peer, report):
         for width in (390, 320, 768):
             await page.set_viewport_size({"width": width, "height": 844})
             await snapshot(f"overview-{width}")
+        await page.set_viewport_size({"width": 320, "height": 844})
+        await page.locator("#reorder-resources").click()
+        await snapshot("mobile-reorder")
+        await page.locator("#cancel-resource-order").click()
+        await page.locator('[data-range="1209600"]').click()
+        await expect(page.locator('[data-range="1209600"]')).to_have_attribute("aria-pressed", "true")
+        await snapshot("overview-320-fortnight")
+        await page.locator('[data-range="3600"]').click()
         await page.set_viewport_size({"width": 390, "height": 844})
         await page.get_by_role("link", name="Office <network>", exact=True).tap()
         await expect(page.locator(".check-card")).to_have_count(4)
         await page.locator(".check-card .latency-plot").first.tap()
         await expect(page.locator(".latency-tooltip").first).to_be_visible()
         await snapshot("mobile-details")
+        await page.set_viewport_size({"width": 320, "height": 844})
+        await snapshot("details-320")
         await page.get_by_role("button", name="Edit Office <network>", exact=True).tap()
         await expect(page.locator("#editor")).to_be_visible()
         await snapshot("mobile-editor")
         await page.locator("#close-editor").tap()
+        await page.locator("#settings").tap()
+        await snapshot("mobile-settings")
+        await page.locator("#close-settings").tap()
         await passed("320/390/768px layouts, mobile dialogs, touch chart inspection")
 
         await page.locator("#nav-speedtest").tap()

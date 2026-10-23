@@ -2,7 +2,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const {scale, geometry, describe, pickPoint} = require("../connectivity/static/latency-chart.js");
+const {scale, geometry, describe, pickPoint, timeTicks} = require("../connectivity/static/latency-chart.js");
+process.env.TZ = "UTC";
 
 const point = (changes = {}) => ({
   from: "2026-09-18T10:00:00Z", to: "2026-09-18T10:00:06Z",
@@ -59,14 +60,16 @@ test("empty history has no measurements or event marks", () => {
 
 test("tooltip reports count, weighted mean input, extrema and result counts", () => {
   const description = describe(point({failure: 2, error: 1}), {});
-  assert.equal(description.samples, "3 successful latency samples");
+  assert.equal(description.samples, "3 samples");
   assert.equal(description.mean, "20 ms");
   assert.equal(description.min, "10 ms");
   assert.equal(description.max, "30 ms");
-  assert.equal(description.counts, "3 successes · 2 failures · 1 monitor error");
-  assert.match(description.precision, /Recent executions grouped/);
+  assert.equal(description.counts, "2 failures · 1 monitor error");
+  assert.equal(description.precision, "");
   assert.equal(description.missing, "");
-  assert.ok(description.window.length > 20);
+  assert.ok(description.window.length < 40);
+  assert.match(description.fullWindow, /2026/);
+  assert.match(description.fullWindow, /GMT|UTC/);
 });
 
 test("missing metrics remain unavailable, including successful ping without RTT", () => {
@@ -74,20 +77,66 @@ test("missing metrics remain unavailable, including successful ping without RTT"
   assert.equal(description.mean, "—");
   assert.equal(description.min, "—");
   assert.equal(description.max, "—");
-  assert.match(description.missing, /not plotted as zero/);
-  assert.match(description.counts, /^1 success ·/);
+  assert.equal(description.missing, "No latency samples");
+  assert.equal(description.counts, "1 OK without latency");
 });
 
 test("bounded ping readings are explicitly approximate", () => {
   const description = describe(point({latency_samples: 1, latency_approximate: true}), {});
-  assert.equal(description.samples, "1 successful latency sample");
-  assert.match(description.approximate, /Approximate.*upper-bound.*≤ 1 ms/);
+  assert.equal(description.samples, "1 sample");
+  assert.equal(description.approximate, "ICMP upper bounds");
 });
 
 test("minute summaries disclose precision even at a raw/summary boundary", () => {
   const summary = {effective_summary_range: {from: "2026-09-18T09:59:00Z", to: "2026-09-18T10:00:03Z"}};
-  assert.match(describe(point(), summary).precision, /individual execution times are unavailable/);
-  assert.match(describe(point({from: "2026-09-18T10:00:03Z"}), summary).precision, /Recent executions/);
+  assert.equal(describe(point(), summary).precision, "Minute summaries");
+  assert.equal(describe(point({from: "2026-09-18T10:00:03Z"}), summary).precision, "");
+});
+
+test("empty and failed windows stay concise without fake metrics or zero-count clutter", () => {
+  const missing = describe(empty(), {});
+  assert.equal(missing.missing, "No observations");
+  assert.equal(missing.mean, "—");
+  assert.equal(missing.counts, "");
+  assert.equal(missing.precision, "");
+  const failed = describe(empty({failure: 1}), {});
+  assert.equal(failed.missing, "No latency samples");
+  assert.equal(failed.counts, "1 failure");
+  assert.equal(describe(point(), {}).counts, "");
+});
+
+for (const seconds of [3600, 86400, 1209600, 30, .6]) {
+  test(`time marks cover both edges and the exact midpoint over ${seconds}s`, () => {
+    const start = Date.parse("2026-10-23T10:00:00Z"), end = start + seconds * 1000;
+    const ticks = timeTicks({from: new Date(start).toISOString(), to: new Date(end).toISOString()});
+    assert.deepEqual(ticks.map(tick => Date.parse(tick.at)), [start, (start + end) / 2, end]);
+    assert.equal(new Set(ticks.map(tick => tick.date + tick.time)).size, 3);
+    assert.equal(new Set(ticks.map(tick => tick.full)).size, 3);
+    assert.ok(ticks.every(tick => tick.full.includes("2026")));
+    assert.ok(ticks.every(tick => seconds >= 86400 ? tick.date : !tick.date));
+  });
+}
+
+test("date labels disambiguate midnight and year boundaries", () => {
+  const ticks = timeTicks({from: "2026-12-31T23:30:00Z", to: "2027-01-01T00:30:00Z"});
+  assert.match(ticks[0].date, /2026/);
+  assert.match(ticks[2].date, /2027/);
+  const description = describe(point({from: ticks[0].at, to: ticks[2].at}), {});
+  assert.match(description.window, /2026/);
+  assert.match(description.window, /2027/);
+});
+
+test("DST overlap keeps absolute tick times and disambiguates tooltip offsets", () => {
+  process.env.TZ = "Europe/Berlin";
+  try {
+    const range = {from: "2026-10-25T00:30:00Z", to: "2026-10-25T01:30:00Z"};
+    const ticks = timeTicks(range);
+    assert.match(ticks[0].full, /GMT\+2/);
+    assert.match(ticks[2].full, /GMT\+1/);
+    const description = describe(point(range), {});
+    assert.match(description.window, /GMT\+2/);
+    assert.match(description.window, /GMT\+1/);
+  } finally { process.env.TZ = "UTC"; }
 });
 
 test("maximum chart resolution stays in a few numeric SVG paths", () => {

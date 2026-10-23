@@ -154,12 +154,12 @@ function timeline(series, previous) {
   container.append(svg,labels,inspection);
   container.update=value=>{
     series=value;
-    const colors={online:"#168775",offline:"#c34c41",unknown:"#8295a3"},paths=new Map();
-    series.timeline.forEach((point,i)=>paths.set(colors[point.state],(paths.get(colors[point.state])||"")+`M${i} 0h1.05v24h-1.05Z`));
+    const paths=new Map();
+    series.timeline.forEach((point,i)=>paths.set(point.state,(paths.get(point.state)||"")+`M${i} 0h1.05v24h-1.05Z`));
     svg.setAttribute("viewBox",`0 0 ${series.timeline.length} 24`);
     svg.setAttribute("aria-valuemax",series.timeline.length-1);
-    svg.replaceChildren(...[...paths].map(([fill,d])=>svgNode("path",{fill,d})));
-    labels.replaceChildren(node("span",{},local(series.requested_range.from)),node("span",{},local(series.requested_range.to)));
+    svg.replaceChildren(...[...paths].map(([state,d])=>svgNode("path",{class:`timeline-${state}`,d})));
+    labels.replaceChildren(...LatencyCharts.timeTicks(series.requested_range).map(tick=>node("time",{dateTime:tick.at,title:tick.full,"aria-label":tick.full},tick.date?node("span",{class:"tick-date"},tick.date):null,node("span",{},tick.time))));
     if(!inspection.hidden)show(active);
     else {svg.setAttribute("aria-valuenow",0);svg.setAttribute("aria-valuetext",series.timeline[0].state);}
   };

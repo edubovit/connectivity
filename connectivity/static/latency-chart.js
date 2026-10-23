@@ -6,6 +6,23 @@ const LatencyCharts = (() => {
   const milliseconds = value => Number.isFinite(value) ? `${number(value)} ms` : "—";
   const hasSample = point => point.latency_samples > 0 && [point.latency_min_ms, point.latency_mean_ms, point.latency_max_ms].every(Number.isFinite);
 
+  function timeTicks(range) {
+    const start = Date.parse(range.from), end = Date.parse(range.to), span = end - start;
+    const dates = span >= 86400000 || new Date(start).toDateString() !== new Date(end).toDateString();
+    const years = new Date(start).getFullYear() !== new Date(end).getFullYear();
+    return [start, (start + end) / 2, end].map(timestamp => {
+      const date = new Date(timestamp);
+      return {
+        at: date.toISOString(),
+        date: dates ? date.toLocaleDateString(undefined, {month: "short", day: "numeric", ...(years ? {year: "numeric"} : {})}) : "",
+        time: date.toLocaleTimeString(undefined, {hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+          ...(span < 60000 ? {second: "2-digit"} : {}), ...(span < 1000 ? {fractionalSecondDigits: 3} : {})}),
+        full: date.toLocaleString(undefined, {year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
+          ...(span < 1000 ? {fractionalSecondDigits: 3} : {}), timeZoneName: "shortOffset"}),
+      };
+    });
+  }
+
   function scale(maximum) {
     const target = (maximum > 0 ? maximum * 1.1 : 1) / 4;
     const magnitude = 10 ** Math.floor(Math.log10(target));
@@ -47,24 +64,28 @@ const LatencyCharts = (() => {
   }
 
   function describe(point, series) {
-    const width = Date.parse(point.to) - Date.parse(point.from);
-    const format = value => new Date(value).toLocaleString(undefined, {
-      year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
-      ...(width < 1000 ? {fractionalSecondDigits: 3} : {}), timeZoneName: "shortOffset",
-    });
+    const start = new Date(point.from), end = new Date(point.to), width = end - start;
+    const date = value => value.toLocaleDateString(undefined, {month: "short", day: "numeric", ...(start.getFullYear() !== end.getFullYear() ? {year: "numeric"} : {})});
+    const time = value => value.toLocaleTimeString(undefined, {hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+      ...(width < 1000 ? {fractionalSecondDigits: 3} : {}), ...(start.getTimezoneOffset() !== end.getTimezoneOffset() ? {timeZoneName: "shortOffset"} : {})});
+    const full = value => value.toLocaleString(undefined, {year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit",
+      ...(width < 1000 ? {fractionalSecondDigits: 3} : {}), timeZoneName: "shortOffset"});
     const summary = series.effective_summary_range;
     const summarized = summary && Date.parse(point.from) < Date.parse(summary.to) && Date.parse(point.to) > Date.parse(summary.from);
     const samples = point.latency_samples;
+    const counts = [[point.failure, "failure"], [point.error, "monitor error"]].filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}${count === 1 ? "" : "s"}`);
+    if (point.success > samples) counts.unshift(`${point.success - samples} OK without latency`);
     return {
-      window: `${format(point.from)} – ${format(point.to)}`,
-      samples: `${samples} successful latency ${samples === 1 ? "sample" : "samples"}`,
+      window: `${date(start)} · ${time(start)} – ${start.toDateString() === end.toDateString() ? "" : date(end) + " · "}${time(end)}`,
+      fullWindow: `${full(start)} – ${full(end)}`,
+      samples: `${samples} ${samples === 1 ? "sample" : "samples"}`,
       mean: hasSample(point) ? milliseconds(point.latency_mean_ms) : "—",
       min: hasSample(point) ? milliseconds(point.latency_min_ms) : "—",
       max: hasSample(point) ? milliseconds(point.latency_max_ms) : "—",
-      counts: `${point.success} ${point.success === 1 ? "success" : "successes"} · ${point.failure} ${point.failure === 1 ? "failure" : "failures"} · ${point.error} monitor ${point.error === 1 ? "error" : "errors"}`,
-      precision: summarized ? "Includes minute summaries; individual execution times are unavailable. Chart windows may be finer than the retained summaries." : "Recent executions grouped into this chart time window.",
-      approximate: point.latency_approximate ? "Approximate: includes ICMP upper-bound samples (for example, ≤ 1 ms)." : "",
-      missing: hasSample(point) ? "" : "No successful latency samples in this window. Missing values and failures are not plotted as zero.",
+      counts: counts.join(" · "),
+      precision: summarized ? "Minute summaries" : "",
+      approximate: point.latency_approximate ? "ICMP upper bounds" : "",
+      missing: hasSample(point) ? "" : point.success + point.failure + point.error ? "No latency samples" : "No observations",
     };
   }
 
@@ -88,7 +109,7 @@ const LatencyCharts = (() => {
     for (const [kind, label] of [["mean", "● Mean"], ["envelope", "↕ Min–max"], ["failure", "│ Failures"], ["error", "│ Monitor errors"]]) {
       legend.append(element("span", `latency-key-${kind}`, label));
     }
-    const instructions = element("p", "latency-instructions", "Hover, tap, or use arrow keys to inspect. Gaps mean no successful samples.");
+    const instructions = element("p", "latency-instructions", "Hover, tap, or use ← → to inspect. Gaps mean no latency samples.");
     instructions.id = `latency-help-${check.id}`;
     const axes = element("div", "latency-axes");
     const unit = element("div", "latency-unit", "Latency (ms)");
@@ -113,18 +134,20 @@ const LatencyCharts = (() => {
     tooltip.setAttribute("role", "tooltip");
     tooltip.hidden = true;
     const windowLabel = element("div", "latency-tooltip-window");
-    const sampleLabel = element("strong", "latency-tooltip-samples");
+    const reading = element("div", "latency-tooltip-reading");
+    const meanLabel = element("strong", "latency-tooltip-mean");
+    const sampleLabel = element("span", "latency-tooltip-samples");
+    reading.append(meanLabel, sampleLabel);
     const stats = element("dl", "latency-tooltip-stats");
     const values = {};
-    for (const key of ["mean", "min", "max"]) {
+    for (const key of ["min", "max"]) {
       const group = element("div");
       values[key] = element("dd");
-      group.append(element("dt", "", key === "mean" ? "Mean" : key === "min" ? "Minimum" : "Maximum"), values[key]);
+      group.append(element("dt", "", key === "min" ? "Min" : "Max"), values[key]);
       stats.append(group);
     }
     const counts = element("div", "latency-tooltip-counts"), precision = element("div", "latency-tooltip-note");
-    const approximate = element("div", "latency-tooltip-bound"), missing = element("div", "latency-tooltip-note");
-    tooltip.append(element("div", "latency-tooltip-heading", "Chart time window · local time"), windowLabel, sampleLabel, stats, counts, precision, approximate, missing);
+    tooltip.append(windowLabel, reading, stats, counts, precision);
     plot.append(svg, empty);
     const eventRail = svgElement("svg", {class: "latency-event-rail", viewBox: `0 0 ${WIDTH} 16`, preserveAspectRatio: "none", "aria-hidden": "true"});
     const failures = path("latency-failures"), errors = path("latency-errors");
@@ -145,7 +168,7 @@ const LatencyCharts = (() => {
 
     function announce(details) {
       plot.setAttribute("aria-valuenow", String(active));
-      plot.setAttribute("aria-valuetext", `${details.window}. ${details.samples}. Mean ${details.mean}, minimum ${details.min}, maximum ${details.max}. ${details.counts}. ${details.approximate} ${details.missing} ${details.precision}`);
+      plot.setAttribute("aria-valuetext", `${details.fullWindow}. ${details.missing || `${details.samples}. Mean ${details.mean}, minimum ${details.min}, maximum ${details.max}`}. ${[details.counts, details.approximate, details.precision].filter(Boolean).join(". ")}`);
     }
 
     function show(index, preserveTime = false) {
@@ -158,14 +181,16 @@ const LatencyCharts = (() => {
       selectedDot.setAttribute("d", hasSample(point) ? `M${x} ${HEIGHT * (1 - point.latency_mean_ms / axis.maximum)}h.001` : "");
       cursor.setAttribute("visibility", "visible");
       windowLabel.textContent = details.window;
-      sampleLabel.textContent = details.samples;
-      for (const key of ["mean", "min", "max"]) values[key].textContent = details[key];
+      windowLabel.title = details.fullWindow;
+      meanLabel.textContent = details.mean;
+      meanLabel.hidden = Boolean(details.missing);
+      sampleLabel.textContent = details.missing || `Mean · ${details.samples}`;
+      stats.hidden = Boolean(details.missing);
+      for (const key of ["min", "max"]) values[key].textContent = details[key];
       counts.textContent = details.counts;
-      precision.textContent = details.precision;
-      approximate.textContent = details.approximate;
-      approximate.hidden = !details.approximate;
-      missing.textContent = details.missing;
-      missing.hidden = !details.missing;
+      counts.hidden = !details.counts;
+      precision.textContent = [details.precision, details.approximate].filter(Boolean).join(" · ");
+      precision.hidden = !precision.textContent;
       tooltip.classList.toggle("latency-tooltip-right", active < points.length / 2);
       tooltip.hidden = false;
       announce(details);
@@ -224,12 +249,15 @@ const LatencyCharts = (() => {
       for (const [line, value] of [[mean, paths.mean], [envelope, paths.envelope], [dots, paths.dots], [failures, paths.failures], [errors, paths.errors]]) line.setAttribute("d", value);
       empty.hidden = valid.length > 0;
       yLabels.replaceChildren(...axis.ticks.map(tick => element("span", "", valid.length ? number(tick) : "—")));
-      const start = Date.parse(series.requested_range.from), end = Date.parse(series.requested_range.to), span = end - start;
-      const formatTick = timestamp => new Date(timestamp).toLocaleString(undefined, {
-        ...(span >= 86400000 ? {month: "short", day: "numeric"} : {}), hour: "2-digit", minute: "2-digit",
-        ...(span < 60000 ? {second: "2-digit"} : {}), ...(span < 1000 ? {fractionalSecondDigits: 3} : {}),
-      });
-      xLabels.replaceChildren(...[start, (start + end) / 2, end].map(timestamp => element("span", "", formatTick(timestamp))));
+      xLabels.replaceChildren(...timeTicks(series.requested_range).map(tick => {
+        const label = element("time");
+        label.dateTime = tick.at;
+        label.title = tick.full;
+        label.setAttribute("aria-label", tick.full);
+        if (tick.date) label.append(element("span", "tick-date", tick.date));
+        label.append(element("span", "", tick.time));
+        return label;
+      }));
       if (mode === "pointer") {
         const box = (onEventRail ? eventRail : plot).getBoundingClientRect();
         show(pickPoint(points, fraction, vertical, box.width, box.height, axis.maximum, onEventRail));
@@ -243,7 +271,7 @@ const LatencyCharts = (() => {
     return chart;
   }
 
-  return {create, scale, geometry, describe, pickPoint};
+  return {create, scale, geometry, describe, pickPoint, timeTicks};
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = LatencyCharts;

@@ -8,7 +8,7 @@ One Python process. No database, frontend build, or external service.
 
 - **Ping, HTTP, TCP, and TLS checks**, each with its own target, interval, and timeout.
 - Up to **50 resources and 200 checks**, with independent scheduling.
-- Live status, latency charts, certificate expiry, and availability history: one hour of detailed results and fourteen days of minute summaries.
+- Dark, responsive dashboard with live status, latency charts, certificate expiry, and full-width availability timelines. One hour of detailed results and fourteen days of minute summaries.
 - Add, edit, and reorder resources and checks in the browser. Settings are saved to YAML.
 - Manual **browser-to-server and server-to-server speed tests**, measuring download/upload throughput and idle/loaded latency.
 - One owner password, with optional HTTPS reverse-proxy support at a root URL or under a path prefix.
