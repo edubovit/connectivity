@@ -34,6 +34,7 @@ const SpeedUI = (() => {
     $("speed-start").disabled=starting||Boolean(busy)||(mode==="node"&&!selectedPeer);
     $("speed-cancel").hidden=!busy||cleaning;$("speed-cancel").disabled=starting;
     $("speed-peer-select").hidden=mode!=="node";
+    SelectControl.sync($("speed-peer"));
     document.querySelectorAll("[data-speed-mode]").forEach(b=>{const selected=b.dataset.speedMode===mode;b.classList.toggle("selected",selected);b.setAttribute("aria-pressed",String(selected));});
     const peer=peers.find(p=>p.id===selectedPeer);
     $("speed-direction").textContent=mode==="browser"?"Download to this browser; upload to this node.":peer?`Download from ${peer.name}; upload to ${peer.name}. Runs independently of this browser.`:"Add a peer in Configure peers to test another node.";

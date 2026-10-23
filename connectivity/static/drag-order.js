@@ -6,6 +6,18 @@ const DragOrder = (() => {
     return index < 0 ? midpoints.length : index;
   }
 
+  function gridInsertionIndex(boxes, x, y) {
+    if (!boxes.length) return 0;
+    const rows = [];
+    boxes.forEach((box, index) => {
+      if (!rows.length || Math.abs(rows.at(-1)[0].box.top - box.top) > 1) rows.push([]);
+      rows.at(-1).push({box, index});
+    });
+    const row = rows.find(items => y < Math.max(...items.map(item => item.box.bottom))) || rows.at(-1);
+    if (y > row[0].box.bottom && row === rows.at(-1)) return boxes.length;
+    return row.find(item => x < (item.box.left + item.box.right) / 2)?.index ?? row.at(-1).index + 1;
+  }
+
   function attach(list, {name, announce, changed = () => {}}) {
     let drag = null, disabled = false, frame = null, moving = false;
     const items = () => [...list.children];
@@ -49,10 +61,11 @@ const DragOrder = (() => {
       if (!drag || drag.keyboard || !drag.moved) return;
       clearMarker();
       const remaining = items().filter(item => item !== drag.item);
-      drag.slot = insertionIndex(remaining.map(item => {
-        const box = item.getBoundingClientRect();
-        return box.top + box.height / 2;
-      }), drag.y);
+      const boxes = remaining.map(item => item.getBoundingClientRect());
+      const style = getComputedStyle(list);
+      drag.slot = style.display === "grid" && style.gridTemplateColumns.split(" ").length > 1
+        ? gridInsertionIndex(boxes, drag.currentX, drag.y)
+        : insertionIndex(boxes.map(box => box.top + box.height / 2), drag.y);
       const target = remaining[drag.slot] || remaining.at(-1);
       target?.classList.add(drag.slot < remaining.length ? "drop-before" : "drop-after");
     }
@@ -92,13 +105,14 @@ const DragOrder = (() => {
       event.preventDefault();
       handle.focus({preventScroll: true});
       const item = handle.parentElement;
-      drag = {item, handle, pointer: event.pointerId, x: event.clientX, startY: event.clientY, y: event.clientY, moved: false, slot: items().indexOf(item)};
+      drag = {item, handle, pointer: event.pointerId, x: event.clientX, currentX: event.clientX, startY: event.clientY, y: event.clientY, moved: false, slot: items().indexOf(item)};
       handle.setPointerCapture(event.pointerId);
       frame = requestAnimationFrame(autoScroll);
     }
     function pointerMove(event) {
       if (!drag || drag.keyboard || drag.pointer !== event.pointerId) return;
       drag.y = event.clientY;
+      drag.currentX = event.clientX;
       if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.startY) >= 5) {
         drag.moved = true;
         drag.item.classList.add("dragging");
@@ -115,7 +129,7 @@ const DragOrder = (() => {
       if (event.key === "Escape" && drag) {
         event.preventDefault(); event.stopPropagation(); finish(true); return;
       }
-      if (![" ", "Enter", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+      if (![" ", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
       if (drag && !drag.keyboard) return;
       const item = handle.parentElement;
@@ -130,7 +144,7 @@ const DragOrder = (() => {
       }
       if (drag && drag.item !== item) finish();
       const current = items().indexOf(item), remaining = items().filter(other => other !== item);
-      const index = event.key === "Home" ? 0 : event.key === "End" ? remaining.length : Math.max(0, Math.min(remaining.length, current + (event.key === "ArrowUp" ? -1 : 1)));
+      const index = event.key === "Home" ? 0 : event.key === "End" ? remaining.length : Math.max(0, Math.min(remaining.length, current + (["ArrowUp","ArrowLeft"].includes(event.key) ? -1 : 1)));
       moving = true;
       list.insertBefore(item, remaining[index] || null);
       refresh(); handle.focus({preventScroll: true}); item.scrollIntoView({block: "nearest"});
@@ -157,7 +171,7 @@ const DragOrder = (() => {
       },
     };
   }
-  return {attach, insertionIndex};
+  return {attach, insertionIndex, gridInsertionIndex};
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = DragOrder;

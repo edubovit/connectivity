@@ -63,6 +63,7 @@ async function api(path, options = {}) {
   return body;
 }
 function showLogin() {
+  SelectControl.close();
   SpeedUI.reset();
   orderRequest++;orderLoading=false;
   resourceDrag?.destroy();resourceDrag=null;orderSnapshot=null;
@@ -71,15 +72,16 @@ function showLogin() {
   statusData=null;historyData=null;
   $("content").replaceChildren(node("p",{class:"muted"},"Loading current observations…"));
   $("summary").replaceChildren();$("health").replaceChildren();setStale(null);
-  $("dashboard").hidden = true; $("navigation").hidden = true; $("login").hidden = false;
+  $("app-shell").hidden = true; $("dashboard").hidden = true; $("navigation").hidden = true; $("login").hidden = false;
   $("editor").close(); $("settings-dialog").close(); $("resource-order-panel").hidden=true;
 }
 function showDashboard() {
-  $("login").hidden = true; $("navigation").hidden = false;
+  $("login").hidden = true; $("app-shell").hidden = false; $("navigation").hidden = false;
   navigate();
 }
 function navigate() {
   if (!csrf) return;
+  SelectControl.close();
   for (const [name, active] of [["nav-resources",!speedPage()],["nav-speedtest",speedPage()]]) {
     if (active) $(name).setAttribute("aria-current","page"); else $(name).removeAttribute("aria-current");
   }
@@ -126,10 +128,11 @@ async function refresh() {
   }
 }
 function badge(state) { return node("span", {class:`badge ${state}`}, state); }
-function timeline(series, previous) {
-  if (previous) { previous.update(series); return previous; }
+function timeline(series, previous, interactive = true) {
+  if (previous?.interactive === interactive) { previous.update(series); return previous; }
   const container = node("div", {class:"timeline"});
-  const svg = svgNode("svg", {preserveAspectRatio:"none",role:"slider",tabindex:0,"aria-label":"Availability timeline. Inspect with arrow keys, hover, or tap.","aria-valuemin":0});
+  container.interactive = interactive;
+  const svg = svgNode("svg", {preserveAspectRatio:"none",...(interactive?{role:"slider",tabindex:0,"aria-label":"Availability timeline. Inspect with arrow keys, hover, or tap.","aria-valuemin":0}:{role:"img"})});
   const inspection=node("div",{class:"timeline-inspection",hidden:true});
   const labels=node("div",{class:"timeline-labels"});
   let active=0;
@@ -141,6 +144,7 @@ function timeline(series, previous) {
     svg.setAttribute("aria-valuenow",active);svg.setAttribute("aria-valuetext",text);
   };
   const inspect=event=>{const box=svg.getBoundingClientRect();show(Math.floor((event.clientX-box.left)/box.width*series.timeline.length));};
+  if(interactive){
   svg.addEventListener("pointermove",inspect);
   svg.addEventListener("pointerdown",event=>{inspect(event);svg.focus({preventScroll:true});});
   svg.addEventListener("pointerleave",()=>inspection.hidden=true);
@@ -151,17 +155,21 @@ function timeline(series, previous) {
     const index=event.key==="Home"?0:event.key==="End"?series.timeline.length-1:event.key==="ArrowLeft"?active-1:event.key==="ArrowRight"?active+1:null;
     if(index!==null){event.preventDefault();show(index);}
   });
+  }
   container.append(svg,labels,inspection);
   container.update=value=>{
     series=value;
     const paths=new Map();
     series.timeline.forEach((point,i)=>paths.set(point.state,(paths.get(point.state)||"")+`M${i} 0h1.05v24h-1.05Z`));
     svg.setAttribute("viewBox",`0 0 ${series.timeline.length} 24`);
-    svg.setAttribute("aria-valuemax",series.timeline.length-1);
+    if(interactive)svg.setAttribute("aria-valuemax",series.timeline.length-1);
+    else svg.setAttribute("aria-label",`Availability history, ${local(series.requested_range.from)} to ${local(series.requested_range.to)}. Availability ${percent(series.availability)}, coverage ${percent(series.coverage)}. Open resource details to inspect.`);
     svg.replaceChildren(...[...paths].map(([state,d])=>svgNode("path",{class:`timeline-${state}`,d})));
     labels.replaceChildren(...LatencyCharts.timeTicks(series.requested_range).map(tick=>node("time",{dateTime:tick.at,title:tick.full,"aria-label":tick.full},tick.date?node("span",{class:"tick-date"},tick.date):null,node("span",{},tick.time))));
-    if(!inspection.hidden)show(active);
-    else {svg.setAttribute("aria-valuenow",0);svg.setAttribute("aria-valuetext",series.timeline[0].state);}
+    if(interactive){
+      if(!inspection.hidden)show(active);
+      else {svg.setAttribute("aria-valuenow",0);svg.setAttribute("aria-valuetext",series.timeline[0].state);}
+    }
   };
   container.update(series);
   return container;
@@ -174,20 +182,26 @@ function resourceCard(resource, detailed = false, previous) {
   const series = historyData.resources[resource.id];
   if (!series) return node("p", {class:"muted"}, "Waiting for a coherent history snapshot…");
   const card=previous||node("article",{class:"resource-card","data-id":resource.id});
+  card.classList.toggle("resource-tile",!detailed);
+  card.dataset.state=resource.state;
   const oldTitle=card.querySelector(".resource-name");
   const linked=!detailed&&!orderSnapshot;
   const title=oldTitle?.tagName===(linked?"A":"SPAN")?oldTitle:node(linked?"a":"span",{class:"resource-name",...(linked?{href:`#resource/${encodeURIComponent(resource.id)}`}:{})});
   title.textContent=resource.name;
   const indicators = resource.checks.filter(c=>c.reason === "overdue" || c.latest?.outcome === "error");
-  const meta = node("div", {class:"resource-meta"}, badge(resource.state), node("span",{},`${resource.checks.length} ${resource.checks.length===1?"check":"checks"}`), indicators.length ? node("span",{class:"offline"},`${indicators.length} need attention`) : null);
+  const meta = node("div", {class:"resource-meta"}, badge(resource.state), node("span",{},`${resource.checks.length} ${resource.checks.length===1?"check":"checks"}`));
   const head=card.querySelector(".resource-head")||node("div",{class:"resource-head"});
-  updateChildren(head,[title,meta]);
+  const index=card.querySelector(".resource-index")||node("span",{class:"resource-index","aria-hidden":"true"});
+  index.textContent=String(statusData.resources.findIndex(r=>r.id===resource.id)+1).padStart(2,"0");
+  updateChildren(head,[index,title,meta]);
   const actions = card.querySelector(".card-actions")||node("div",{class:"card-actions"},node("button",{class:"quiet","aria-label":`Edit ${resource.name}`,onclick:()=>openEditor(resource.id)},"Edit"));
   actions.querySelector("button").setAttribute("aria-label",`Edit ${resource.name}`);
   actions.hidden = Boolean(orderSnapshot);
   const body=card.querySelector(".resource-body")||node("div",{class:"resource-body"});
-  updateChildren(body,[timeline(series,body.querySelector(".timeline")),stat("Availability",percent(series.availability)),stat("Coverage",percent(series.coverage))]);
+  updateChildren(body,[timeline(series,body.querySelector(".timeline"),detailed),stat("Availability",percent(series.availability)),stat("Coverage",percent(series.coverage))]);
   const children=[head,body,actions];
+  const count=resource.check_counts;
+  children.push(node("div",{class:"resource-note"},indicators.length?`${indicators.length} ${indicators.length===1?"check needs":"checks need"} attention`:resource.state==="online"?"All checks passed":`${count[resource.state]} ${resource.state} ${count[resource.state]===1?"check":"checks"}`));
   if(detailed){
     const details=card.querySelector(".resource-details")||node("details",{class:"resource-details"},node("summary",{},"Resource details"),node("div"));
     const counts=resource.check_counts;
@@ -300,6 +314,7 @@ function render() {
   $("range-label").textContent = `${selected.from ? "Fixed" : "Rolling"} · ${local(lastRange.from)} – ${local(lastRange.to)}`;
   document.querySelectorAll("[data-range]").forEach(b=>{const active=selected.from?b.dataset.range==="custom":+b.dataset.range===selected.seconds;b.classList.toggle("selected",active);b.setAttribute("aria-pressed",String(active));});
   const content = $("content");
+  content.classList.toggle("resource-grid",!resource);
   if (orderSnapshot && resourceDrag) {
     if (statusData.config_revision !== orderSnapshot.revision && !$("resource-order-error").textContent) {
       $("resource-order-error").textContent = "Configuration changed in another tab. Your order is unsaved; reload before saving.";
@@ -384,6 +399,7 @@ async function openResourceOrder() {
     resourceDrag=DragOrder.attach($("content"), {
       name:item=>`resource ${item.querySelector(".resource-name").textContent}`,
       announce:text=>$("resource-order-status").textContent=text,
+      changed:()=>[...$("content").children].forEach((item,index)=>item.querySelector(".resource-index").textContent=String(index+1).padStart(2,"0")),
     });
     $("save-resource-order").disabled=snapshot.resources.length<2;
   } catch (error) {
@@ -471,7 +487,7 @@ async function deleteResource(rid) {
 $("editor-form").addEventListener("invalid",event=>{
   const details=event.target.closest(".check-editor");
   if(details)details.open=true;
-  if(event.target===$("editor-form").querySelector("input:invalid,select:invalid"))requestAnimationFrame(()=>event.target.focus());
+  if(event.target===$("editor-form").querySelector("input:invalid,select:invalid"))requestAnimationFrame(()=>SelectControl.focus(event.target));
 },true);
 $("editor-form").addEventListener("submit",async event=>{
   event.preventDefault();if($("save-resource").disabled)return;const resource=readResource();
@@ -518,7 +534,8 @@ $("done-check-order").addEventListener("click",()=>endCheckOrder(false));
 $("cancel-check-order").addEventListener("click",()=>endCheckOrder(true));
 $("editor").addEventListener("close",()=>endCheckOrder(false));
 [$("close-editor"),$("cancel-editor")].forEach(button=>button.addEventListener("click",()=>$("editor").close()));
-$("settings").addEventListener("click",async()=>{try{settingsSnapshot=await api("/config");$("refresh-seconds").value=settingsSnapshot.ui.refresh_interval_seconds;$("settings-error").textContent="";$("settings-dialog").showModal();}catch(error){setStale(error.message);}});
+$("settings").addEventListener("click",async()=>{try{settingsSnapshot=await api("/config");$("refresh-seconds").value=settingsSnapshot.ui.refresh_interval_seconds;$("settings-error").textContent="";$("settings-dialog").showModal();$("settings").setAttribute("aria-expanded","true");}catch(error){setStale(error.message);}});
+$("settings-dialog").addEventListener("close",()=>$("settings").setAttribute("aria-expanded","false"));
 $("close-settings").addEventListener("click",()=>$("settings-dialog").close());
 $("settings-form").addEventListener("submit",async event=>{event.preventDefault();const candidate={...settingsSnapshot,ui:{refresh_interval_seconds:Number($("refresh-seconds").value)}};const button=event.submitter;button.disabled=true;try{await saveConfig(candidate,settingsSnapshot);$("settings-dialog").close();refresh();}catch(error){$("settings-error").textContent=`${error.message}${error.status===412?" Close and reopen settings to reload.":""}`;}finally{button.disabled=false;}});
 $("login-form").addEventListener("submit",async event=>{event.preventDefault();const button=event.submitter;button.disabled=true;$("login-error").textContent="";try{const data=await api("/session",{method:"POST",body:JSON.stringify({password:$("password").value})});csrf=data.csrf_token;$("password").value="";selected={seconds:3600};rememberRange();$("custom-range").hidden=true;if(!speedPage())location.hash="";showDashboard();}catch(error){$("login-error").textContent=error.message;}finally{button.disabled=false;}});

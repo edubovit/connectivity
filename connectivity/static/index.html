@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#0b1018">
+  <meta name="theme-color" content="#141414">
   <title>Connectivity</title>
   <link rel="icon" href="static/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="static/app.css">
   <script src="static/latency-chart.js" defer></script>
   <script src="static/drag-order.js" defer></script>
+  <script src="static/select-control.js" defer></script>
   <script src="static/speed-browser.js" defer></script>
   <script src="static/speed-ui.js" defer></script>
   <script src="static/app.js" defer></script>
@@ -17,17 +18,12 @@
   <a class="skip-link" href="#dashboard">Skip to content</a>
   <header class="topbar">
     <a class="brand" href="#" aria-label="Connectivity home"><img src="static/icon.svg" alt="" width="30" height="30">Connectivity</a>
-    <nav id="navigation" aria-label="Main navigation" hidden>
-      <a id="nav-resources" href="#">Resources</a>
-      <a id="nav-speedtest" href="#speedtest">Speedtest</a>
-      <button id="settings" class="quiet">Settings</button>
-      <button id="logout" class="quiet">Log out</button>
-    </nav>
+    <span class="brand-note">Private network monitor</span>
   </header>
   <div id="banner" class="banner" role="alert" hidden></div>
 
   <main id="login" class="login" hidden>
-    <div class="login-intro"><span class="eyebrow">Connectivity / Network monitor</span><h1>Your network.<br>In plain sight.</h1><p>Reachability, latency, and speed.<br>Measured from this node.</p><div class="login-signals" aria-hidden="true"><span>ICMP</span><span>HTTP</span><span>TCP</span><span>TLS</span></div></div>
+    <div class="login-intro"><span class="eyebrow">Connectivity / Private monitoring</span><h1>A clear view<br>of your network.</h1><p>Reachability, latency, and throughput.<br>Measured from this node.</p></div>
     <form id="login-form" class="login-card">
       <h2>Sign in</h2>
       <label for="password">Owner password</label>
@@ -38,6 +34,17 @@
     </form>
   </main>
 
+  <div id="app-shell" class="app-shell" hidden>
+    <aside id="navigation" class="rail" hidden>
+      <span class="rail-label">Workspace</span>
+      <nav aria-label="Main navigation">
+        <a id="nav-resources" href="#"><span aria-hidden="true">01</span> Resources</a>
+        <a id="nav-speedtest" href="#speedtest"><span aria-hidden="true">02</span> Speedtest</a>
+        <button id="settings" class="quiet" aria-haspopup="dialog" aria-controls="settings-dialog" aria-expanded="false"><span aria-hidden="true">03</span> Settings</button>
+      </nav>
+      <div class="rail-footer"><p>History in memory<br>1 h raw / 14 d summaries</p><button id="logout" class="quiet">Log out</button></div>
+    </aside>
+    <div class="pages">
   <main id="dashboard" class="workspace" tabindex="-1" hidden>
     <section class="page-heading">
       <div><a id="back-resources" class="back-link" href="#" hidden>← Resources</a><h1 id="page-title">Resources</h1><p id="page-subtitle">Reachability from this node.</p></div>
@@ -56,7 +63,7 @@
       <label>End, local time<input id="range-end" type="datetime-local" step="1" required></label><label>UTC offset<input id="offset-end" placeholder="+02:00" pattern="[+\-][0-9]{2}:[0-9]{2}" required></label>
       <button type="submit">Apply</button><p id="range-error" class="error wide" role="alert"></p>
     </form>
-    <div class="range-meta"><span id="range-label"></span><details class="help"><summary>About this view</summary><div class="help-body"><p id="timezone"></p><p>Current status is live. The selected range applies to history only.</p><p>Availability excludes unknown time. Coverage is the share of time observed.</p><p>Timeline: any downtime is red; otherwise unobserved time is gray; otherwise green. Inspect a block for durations.</p><p>One hour of raw results; fourteen days of minute summaries. Restarting clears history and sessions.</p><p>Custom times use your browser’s timezone. Enter the correct UTC offset for each date, including DST.</p></div></details></div>
+    <div class="range-meta"><span id="range-label"></span><details class="help"><summary>About this view</summary><div class="help-body"><p id="timezone"></p><p>Current status is live. The selected range applies to history only.</p><p>Availability excludes unknown time. Coverage is the share of time observed.</p><p>Timeline: any downtime is red; otherwise unobserved time is gray; otherwise bone. Open resource details to inspect block durations.</p><p>One hour of raw results; fourteen days of minute summaries. Restarting clears history and sessions.</p><p>Custom times use your browser’s timezone. Enter the correct UTC offset for each date, including DST.</p></div></details></div>
     <section id="resource-order-panel" class="order-panel" hidden aria-label="Resource reordering">
       <div class="order-heading"><strong>Reorder resources</strong><div class="order-actions"><button id="cancel-resource-order">Cancel</button><button id="reload-resource-order" hidden>Reload saved order</button><button id="save-resource-order" class="primary">Save order</button></div></div>
       <p>Drag a handle, or focus it and use the arrow keys. Escape undoes a picked-up move.</p><p id="resource-order-status" class="order-status" role="status"></p><p id="resource-order-error" class="error" role="alert"></p>
@@ -72,7 +79,7 @@
         <label>Resource name<input id="resource-name" required maxlength="100" autocomplete="off"></label>
         <div class="section-heading"><h3>Checks</h3><div class="order-actions"><button type="button" id="reorder-checks" class="quiet">Reorder checks</button><button type="button" id="done-check-order" hidden>Done</button><button type="button" id="cancel-check-order" hidden>Undo order</button></div></div>
         <p id="check-order-help" class="muted" hidden>Drag a handle or use arrow keys. Done keeps the draft; Save applies it.</p>
-        <div id="check-fields"></div><p id="check-order-status" class="order-status" role="status"></p><button type="button" id="add-check">Add check</button>
+        <div id="check-fields"></div><div class="add-check-row"><button type="button" id="add-check">Add check</button></div><p id="check-order-status" class="order-status" role="status"></p>
         <p class="form-note">All checks must pass for a resource to be online. Measurement changes reset affected history; names and order do not.</p>
         <p id="editor-error" class="error" role="alert"></p><button type="button" id="reload-config" hidden>Reload saved configuration</button>
       </div>
@@ -109,5 +116,7 @@
       <p class="form-note">Changing a URL requires its password again. Target changes clear the latest result; cancel active tests before changing or deleting their peer.</p><p id="peer-error" class="error" role="alert"></p><button id="peer-reload" type="button" hidden>Reload saved peers</button>
     </div><div class="dialog-actions"><button id="peer-cancel" type="button">Cancel</button><button class="primary" type="submit">Save peers</button></div></form>
   </dialog>
+    </div>
+  </div>
 </body>
 </html>

@@ -126,6 +126,15 @@ async def test_drag_reordering_is_bundled_and_inline(client):
     assert "const DragOrder" in await script.text()
 
 
+async def test_select_control_is_bundled_and_loaded_before_clients(client):
+    html = await (await client.get("/")).text()
+    assert html.index('static/select-control.js') < html.index('static/speed-ui.js') < html.index('static/app.js')
+    script = await client.get("/static/select-control.js")
+    assert script.status == 200 and script.content_type == "text/javascript"
+    assert "const SelectControl" in await script.text()
+    assert 'id="app-shell"' in html and 'class="rail"' in html
+
+
 async def test_config_update_revision_secret_and_persistence(client):
     headers=await sign_in(client)
     r=await client.get("/api/v1/config");body=await r.json()

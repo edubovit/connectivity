@@ -352,7 +352,7 @@ async def static(request):
     name = request.match_info.get("name", "index.html")
     if request.match_info.get("name") == "index.html":
         return await canonical_root(request)
-    if name not in {"index.html", "app.js", "latency-chart.js", "drag-order.js", "speed-browser.js", "speed-ui.js", "app.css", "icon.svg"}:
+    if name not in {"index.html", "app.js", "latency-chart.js", "drag-order.js", "select-control.js", "speed-browser.js", "speed-ui.js", "app.css", "icon.svg"}:
         raise web.HTTPNotFound()
     types = {"html": "text/html", "js": "text/javascript", "css": "text/css", "svg": "image/svg+xml"}
     return web.Response(body=(STATIC / name).read_bytes(), content_type=types[name.rsplit(".", 1)[1]])

@@ -54,6 +54,7 @@ Store working configs, logs, screenshots, generated reports, release staging, an
 | `connectivity/speed_web.py` | Speedtest HTTP endpoints and authenticated WebSocket admission |
 | `connectivity/static/app.js` | Dashboard, config editors, navigation and polling |
 | `connectivity/static/latency-chart.js`, `drag-order.js` | Interactive charts and accessible reordering |
+| `connectivity/static/select-control.js` | Styled single-select controls, native value/validation integration, keyboard and popover lifecycle |
 | `connectivity/static/speed-browser.js`, `speed-ui.js` | Browser measurement/transport and speedtest UI |
 | `tests/` | Deterministic unit tests and isolated network/process integration tests |
 | `tools/` | Reusable local fixtures, browser checks, memory and load measurements |
@@ -139,7 +140,7 @@ Run from the repository root:
 
 ```sh
 python -m pytest -q
-node --test tests/latency_chart.test.cjs tests/drag_order.test.cjs tests/speed_browser.test.cjs
+node --test tests/latency_chart.test.cjs tests/drag_order.test.cjs tests/select_control.test.cjs tests/speed_browser.test.cjs
 python -m pip check
 git diff --check
 ```
@@ -196,7 +197,11 @@ Install Chromium as well as Firefox and WebKit for this suite. It starts and sto
 
 Screenshots and the JSON report go to `.local/ui-browser/`. Prefix-mode browser checks intercept an HTTPS origin and forward requests and the origin's browser cookie jar to a real loopback backend, verifying relative assets, navigation, cookie flags and APIs without changing system trust. WebKit interception does not expose its outgoing Cookie header, so the bridge supplies cookies explicitly. This is not a real TLS termination/nginx test. The suite also checks accessible control names, text size and page overflow; it is not a complete accessibility audit or a native mobile/Safari test.
 
-The UI uses a dark palette regardless of the OS color preference. Availability timelines span the card's content width at every viewport, including while reordering. Both availability and latency charts show start, midpoint and end times; longer or cross-day ranges include dates, with full local timestamps and UTC offsets available on the labels. Browser checks assert these layout and labeling contracts at desktop and mobile widths.
+The UI follows Swiss After Dark: charcoal surfaces, bone text, a scarlet index rail, and a two-column resource grid that collapses on narrow screens. Failed tiles retain their position, size and single-column span. Hover lightens the entire tile while keeping its state color; keyboard focus adds an outline. A tile's non-interactive surface opens its resource details; Edit remains independent. Pointer reordering accounts for both grid columns and rows, and arrow keys follow saved array order.
+
+Availability timelines are 12 px tall and span each card's content width, including while reordering. Overview timelines are part of the tile link; resource detail and check timelines retain hover/touch/keyboard inspection. Both availability and latency charts show start, midpoint and end times; longer or cross-day ranges include dates, with full local timestamps and UTC offsets available on the labels. Browser checks assert these contracts at desktop and mobile widths, including real probe-driven state transitions that must not move or resize a tile.
+
+Styled dropdowns enhance the existing native single-select values without changing form serialization. Popovers live in the browser's top layer so dialog overflow cannot clip them. Browsers without the Popover API retain native selects. The module observes new controls, option changes and disabled attributes; call `SelectControl.sync(select)` after programmatic `.value` changes. Preserve immutable check types, field validation, labeled controls, focus and Escape/Tab behavior. The browser suite uses visible dropdown controls rather than bypassing them through hidden native selects.
 
 Latency tooltips show the time window, mean, sample count and min/max, with nonzero failures/monitor errors and short summary/upper-bound notes only when relevant. Empty windows show no invented metrics. Detailed precision, diagnostic metadata and raw executions remain in each check's expandable sections. Check editors expand individually; reordering collapses them without discarding drafts. Keep expanded diagnostic panels, focused charts and loaded execution snapshots stable across polling. Do not hide errors or turn unknown/partial measurements into successful values to simplify the display.
 

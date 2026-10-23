@@ -126,6 +126,7 @@ async def layout(page):
       const labels = ticks.map(e=>e.getBoundingClientRect());
       const times = ticks.map(e=>Date.parse(e.dateTime));
       return {
+        thickness: Math.abs(bar.height-12)<1,
         fullWidth: Math.abs(bar.left-box.left-parseFloat(style.paddingLeft)-parseFloat(style.borderLeftWidth))<1 &&
           Math.abs(box.right-bar.right-parseFloat(style.paddingRight)-parseFloat(style.borderRightWidth))<1,
         marks: ticks.length===3 && times[0]<times[1] && times[1]<times[2] && Math.abs(times[1]-(times[0]+times[2])/2)<=1,
@@ -137,15 +138,24 @@ async def layout(page):
     assert all(all(check.values()) for check in timelines), timelines
 
 
+async def select_value(page, select, value):
+    text = await select.evaluate("(e,value)=>[...e.options].find(option=>option.value===value).text", value)
+    trigger = select.locator("xpath=following-sibling::div[1]").get_by_role("combobox")
+    await trigger.click()
+    await page.get_by_role("option", name=text, exact=True).click()
+    await expect(select).to_have_value(value)
+    await expect(trigger).to_contain_text(text)
+
+
 async def fill_check(page, index, name, kind, fixture):
     check = page.locator(".check-fields").nth(index)
     await check.locator('[name="name"]').fill(name)
-    await check.locator('[name="type"]').select_option(kind)
+    await select_value(page, check.locator('[name="type"]'), kind)
     if kind == "http":
         await check.locator('[name="url"]').fill(f"http://127.0.0.1:{fixture['http']}/ok")
-        await check.locator('[name="method"]').select_option("POST")
+        await select_value(page, check.locator('[name="method"]'), "POST")
         await expect(check.locator(".warning")).to_be_visible()
-        await check.locator('[name="method"]').select_option("GET")
+        await select_value(page, check.locator('[name="method"]'), "GET")
         await expect(check.locator(".warning")).not_to_be_visible()
     else:
         await check.locator('[name="host"]').fill("127.0.0.1")
@@ -200,15 +210,28 @@ async def run_browser(browser_type, args, primary, peer, report):
         assert await page.evaluate("[percent(null),percent(0),percent(1),percent(.9999999),percent(.0000001)]") == ["N/A", "0%", "100%", "<100%", "<0.01%"]
         await snapshot("empty")
         await passed("login rejection, authentication, empty state")
+        assert await page.locator(".login").evaluate("e=>getComputedStyle(e).fontFamily") == "Arial, Helvetica, sans-serif"
 
         await page.locator("#add-resource").click()
         await expect(page.locator("#resource-name")).to_be_focused()
         await page.locator("#resource-name").fill("Office network")
+        dropdown = page.get_by_role("combobox", name="Type", exact=True)
+        await dropdown.click()
+        await expect(page.locator(".select-menu:popover-open")).to_be_visible()
+        await dropdown.press("End")
+        await dropdown.press("Enter")
+        await expect(page.locator('.check-fields [name="type"]')).to_have_value("tls")
+        await dropdown.click()
+        await dropdown.press("Escape")
+        await expect(page.locator("#editor")).to_be_visible()
+        await expect(page.locator(".select-menu:popover-open")).to_have_count(0)
         for index, kind in enumerate(("http", "ping", "tcp", "tls")):
             if index:
                 await page.locator("#add-check").click()
             await fill_check(page, index, {"http": "Web service", "ping": "Gateway", "tcp": "Port", "tls": "Certificate"}[kind], kind, primary)
         await snapshot("editor")
+        gap = await page.locator("#add-check").evaluate("e=>e.getBoundingClientRect().top-document.querySelector('.check-fields:last-child').getBoundingClientRect().bottom")
+        assert abs(gap - 16) < 1, gap
         await page.locator("#save-resource").click()
         await expect(page.locator("#editor")).not_to_be_visible()
         await expect(page.locator(".resource-card .badge")).to_have_text("online")
@@ -219,6 +242,7 @@ async def run_browser(browser_type, args, primary, peer, report):
 
         await page.get_by_role("button", name="Edit Office network", exact=True).click()
         await expect(page.locator('.check-editor[open]')).to_have_count(1)
+        await expect(page.get_by_role("combobox", name="Type", exact=True).first).to_be_disabled()
         await page.locator('.check-fields [name="name"]').first.fill("")
         await page.locator('.check-editor>summary').first.click()
         await page.locator("#save-resource").click()
@@ -236,18 +260,59 @@ async def run_browser(browser_type, args, primary, peer, report):
         await expect(page.locator(".resource-card .badge.offline")).to_have_count(1)
         await snapshot("overview")
         await passed("dark theme regardless of OS preference, full-width timelines and three aligned time marks")
+        geometry = "() => [...document.querySelectorAll('.resource-tile')].map(e=>{const r=e.getBoundingClientRect();return [e.dataset.id,r.x+scrollX,r.y+scrollY,r.width,r.height]})"
+        await page.mouse.move(0, 0)
+        original_geometry = await page.evaluate(geometry)
+        cfg = await api(page, url, "/config")
+        failed = next(r for r in cfg["resources"] if r["name"] == "Unavailable service")
+        failed["checks"][0]["expected_status"] = 503
+        await api(page, url, "/config", "PUT", {"resources": cfg["resources"], "ui": cfg["ui"]}, cfg["revision"])
+        failed_tile = page.locator(f'[data-id="{failed["id"]}"]')
+        await expect(failed_tile).to_have_attribute("data-state", "online")
+        assert await page.evaluate(geometry) == original_geometry
+        cfg = await api(page, url, "/config")
+        next(r for r in cfg["resources"] if r["id"] == failed["id"])["checks"][0]["expected_status"] = 200
+        await api(page, url, "/config", "PUT", {"resources": cfg["resources"], "ui": cfg["ui"]}, cfg["revision"])
+        await expect(failed_tile).to_have_attribute("data-state", "offline")
+        assert await page.evaluate(geometry) == original_geometry
+        desktop = await browser.new_context(viewport={"width": 1440, "height": 1000}, storage_state=await context.storage_state())
+        desktop_page = await desktop.new_page()
+        desktop_page.on("pageerror", lambda error: errors.append(str(error)))
+        try:
+            await desktop_page.goto(url)
+            desktop_tile = desktop_page.locator(f'[data-id="{failed["id"]}"]')
+            await expect(desktop_tile).to_have_attribute("data-state", "offline")
+            before_hover = await desktop_page.evaluate(geometry)
+            await desktop_tile.hover(position={"x": 10, "y": 10})
+            await expect(desktop_tile).to_have_css("background-color", "rgb(53, 35, 31)")
+            await expect(desktop_tile.locator(".resource-name")).to_have_css("text-decoration-line", "none")
+            assert await desktop_page.evaluate(geometry) == before_hover
+            await desktop_page.screenshot(path=str(screenshots / "failure-hover.png"), full_page=True)
+        finally:
+            await desktop.close()
+        await failed_tile.tap(position={"x": 10, "y": 10})
+        await expect(page.locator("#page-title")).to_have_text("Unavailable service")
+        await expect(page.locator(".timeline svg[role=slider]").first).to_be_visible()
+        await page.locator("#back-resources").click()
+        await expect(page.locator("#content.resource-grid")).to_be_visible()
+        await page.get_by_role("link", name="Office network", exact=True).focus()
+        await page.get_by_role("link", name="Office network", exact=True).press("Enter")
+        await expect(page.locator("#page-title")).to_have_text("Office network")
+        await page.locator("#back-resources").click()
+        await passed("stable failure geometry and order, whole-tile touch/keyboard navigation, failure hover and detail inspection")
         await page.locator("#name-filter").fill("office")
         await expect(page.locator(".resource-card")).to_have_count(1)
         await page.locator("#name-filter").fill("not here")
         await expect(page.locator("#content")).to_contain_text("No matching resources")
         await page.locator("#name-filter").fill("")
-        await page.locator("#state-filter").select_option("offline")
+        await select_value(page, page.locator("#state-filter"), "offline")
         await expect(page.locator(".resource-card")).to_have_count(1)
-        await page.locator("#state-filter").select_option("")
+        await select_value(page, page.locator("#state-filter"), "")
         await passed("failure state, search, state filtering, no-match state")
 
         await page.locator("#reorder-resources").click()
         handle = page.get_by_role("button", name=re.compile(r"^Move resource Office network,"))
+        await expect(page.get_by_role("combobox", name="Current state", exact=True)).to_be_disabled()
         await handle.focus()
         await handle.press("Space")
         await handle.press("ArrowDown")
@@ -257,13 +322,14 @@ async def run_browser(browser_type, args, primary, peer, report):
         await page.locator("#save-resource-order").click()
         await expect(page.locator("#resource-order-panel")).not_to_be_visible()
         await expect(page.locator(".resource-name").first).to_have_text("Unavailable service")
+        assert await page.locator(".resource-index").all_text_contents() == ["01", "02"]
         await page.locator("#reorder-resources").click()
         handle = page.locator(".resource-card .drag-handle").first
         box = await handle.bounding_box()
         target = await page.locator(".resource-card").last.bounding_box()
         await page.mouse.move(box["x"] + 22, box["y"] + 22)
         await page.mouse.down()
-        await page.mouse.move(target["x"] + 30, target["y"] + target["height"] - 5, steps=12)
+        await page.mouse.move(target["x"] + target["width"] - 10, target["y"] + target["height"] - 5, steps=12)
         await page.mouse.up()
         await expect(page.locator(".resource-name").first).to_have_text("Office network")
         await page.locator("#save-resource-order").click()
@@ -417,8 +483,26 @@ async def run_browser(browser_type, args, primary, peer, report):
         await snapshot("mobile-editor")
         await page.locator("#close-editor").tap()
         await page.locator("#settings").tap()
+        await expect(page.locator("#settings")).to_have_attribute("aria-expanded", "true")
         await snapshot("mobile-settings")
         await page.locator("#close-settings").tap()
+        await expect(page.locator("#settings")).to_have_attribute("aria-expanded", "false")
+        await page.locator("#nav-resources").tap()
+        await expect(page.locator("#page-title")).to_have_text("Resources")
+        await page.locator("#add-resource").tap()
+        mobile_type = page.get_by_role("combobox", name="Type", exact=True)
+        await mobile_type.tap()
+        await expect(page.locator(".select-menu:popover-open")).to_be_visible()
+        assert await page.locator(".select-menu:popover-open").evaluate("e=>{const r=e.getBoundingClientRect();return r.left>=0&&r.top>=0&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1&&e.contains(document.elementFromPoint(r.left+15,r.top+15));}")
+        await snapshot("mobile-dropdown")
+        await mobile_type.press("p")
+        await mobile_type.press("Enter")
+        await expect(page.locator('.check-fields [name="type"]')).to_have_value("ping")
+        await mobile_type.tap()
+        await mobile_type.press("Tab")
+        await expect(page.locator(".select-menu:popover-open")).to_have_count(0)
+        await expect(page.locator('.check-fields [name="host"]')).to_be_focused()
+        await page.locator("#cancel-editor").tap()
         await passed("320/390/768px layouts, mobile dialogs, touch chart inspection")
 
         await page.locator("#nav-speedtest").tap()
@@ -440,6 +524,15 @@ async def run_browser(browser_type, args, primary, peer, report):
         peers = await api(page, url, "/speedtest/peers")
         assert peers["peers"][0]["has_password"] and "password" not in peers["peers"][0]
         await passed("peer CRUD, retained password and read redaction")
+        await page.locator('[data-speed-mode="node"]').click()
+        peer_control = page.get_by_role("combobox", name="Peer", exact=True)
+        await expect(peer_control).to_contain_text("Lab peer renamed")
+        await peer_control.click()
+        await expect(page.get_by_role("option", name="Lab peer renamed", exact=True)).to_be_visible()
+        await peer_control.press("Escape")
+        await expect(peer_control).to_be_focused()
+        await page.locator('[data-speed-mode="browser"]').click()
+        await passed("styled selects: keyboard choice, Escape within dialogs, immutable types, disabled filters and dynamic peer options")
 
         await page.locator("#speed-start").click()
         await expect(page.locator("#speed-cancel")).to_be_visible()
