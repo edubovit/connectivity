@@ -4,6 +4,8 @@ Connectivity is a small, self-hosted network monitor with a browser dashboard. I
 
 One Python process. No database, frontend build, or external service.
 
+![Connectivity dashboard showing online and offline local test resources](docs/images/dashboard.png)
+
 ## Features
 
 - **Ping, HTTP, TCP, and TLS checks**, each with its own target, interval, and timeout.
