@@ -98,14 +98,24 @@ async def channel(request):
     if not ws.can_prepare(request).ok:
         raise Problem("websocket_required", "This endpoint requires a WebSocket upgrade", 400)
     run.pending_sockets += 1
-    run.connections[ws] = request.transport
+    connection = {"ws": ws, "sender": None, "transport": request.transport, "close_task": None}
+    connection["receive_done"] = asyncio.Event()
+    async def receive(timeout=None):
+        connection["receive_done"].clear()
+        async with asyncio.timeout(timeout) as deadline:
+            connection["receive_timeout"] = deadline
+            try:
+                return await ws.receive()
+            finally:
+                connection["receive_timeout"] = None
+                connection["receive_done"].set()
+    run.connections[ws] = connection
     ws.headers["Cache-Control"] = "no-store, no-transform"
     registered = False
     direction = None
     try:
         await ws.prepare(request)
-        async with asyncio.timeout(5):
-            first = await ws.receive()
+        first = await receive(5)
         if first.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED):
             return ws
         if first.type != WSMsgType.TEXT or len(first.data) > 4096:
@@ -128,7 +138,7 @@ async def channel(request):
             if not integer(index, manager.profile.streams-1) or direction not in ("download", "upload") or direction != run.direction or run.phase != direction+"_setup" or (direction,index) in run.joined:
                 raise SpeedError("protocol_error", "Unexpected or duplicate payload stream")
             run.joined.add((direction,index))
-            run.channels[index] = {"ws": ws, "sender": None, "transport": request.transport}
+            run.channels[index] = connection
             registered = True
         else:
             raise SpeedError("protocol_error", "Unknown channel role")
@@ -136,7 +146,9 @@ async def channel(request):
         run.last_activity = time.monotonic()
         await ws.send_json({"type": "ready", "protocol": VERSION, "run_id": run.id, "instance": manager.instance})
         received = acked = 0
-        async for message in ws:
+        while connection["close_task"] is None:
+            message = await receive()
+            if message.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED): break
             if manager.active is not run or run.finishing: break
             if time.monotonic()-run.clock >= run.limit or time.time()-run.started >= run.limit:
                 raise SpeedError("timeout", "Overall speedtest deadline exceeded")
@@ -183,16 +195,14 @@ async def channel(request):
         if registered and not run.finishing:
             await manager.finish(run, "failed", "protocol_error", "Invalid speedtest channel operation")
     finally:
-        run.connections.pop(ws, None)
         if not registered: run.pending_sockets -= 1
         unexpected_data_close = direction == run.direction and run.channels.get(hello.get("index"), {}).get("ws") is ws and not run.ending_data if registered and direction else False
         if registered and manager.active is run and not run.finishing and (direction is None or unexpected_data_close):
             await manager.finish(run, "cancelled" if run.mode == "browser" else "failed", "connection_lost", "A test channel disconnected before completion")
-        if ws.prepared:
-            try:
-                async with asyncio.timeout(1): await ws.close(drain=False)
-            except (TimeoutError, ConnectionError):
-                if request.transport: request.transport.abort()
+        try:
+            await run.close_connection(connection)
+        finally:
+            run.connections.pop(ws, None)
     return ws
 
 

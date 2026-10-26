@@ -43,7 +43,7 @@ def fixture(python, directory, name, public_url=None):
         options = {"startupinfo": startup, "creationflags": subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP}
     with (directory / f"{name}.log").open("w", encoding="utf-8") as log:
         process = subprocess.Popen([str(python), "tools/devserver.py", "--config", str(path), "--port", str(port),
-                                    "--http-port", str(http), "--tls-port", str(tls)], cwd=ROOT, stdout=log, stderr=log, **options)
+                                    "--http-port", str(http), "--tls-port", str(tls), "--speedtest-frame-delay", "0.0625"], cwd=ROOT, stdout=log, stderr=log, **options)
         try:
             for _ in range(100):
                 if process.poll() is not None:
@@ -217,6 +217,17 @@ async def fill_check(page, index, name, kind, fixture):
 async def run_browser(browser_type, args, primary, peer, report):
     browser = await browser_type.launch()
     context = await browser.new_context(viewport={"width": 1440, "height": 1000}, timezone_id="Europe/Berlin", has_touch=True)
+    await context.add_init_script("""(() => {
+        window.speedSockets=[];
+        const NativeWebSocket=WebSocket;
+        window.WebSocket=class extends NativeWebSocket {
+            constructor(...args) {
+                super(...args);
+                const record={closed:false};speedSockets.push(record);
+                this.addEventListener('close',event=>Object.assign(record,{closed:true,code:event.code,clean:event.wasClean}));
+            }
+        };
+    })()""")
     page = await context.new_page()
     page.set_default_timeout(10000)
     errors, external = [], []
@@ -662,8 +673,11 @@ async def run_browser(browser_type, args, primary, peer, report):
         if not args.skip_transfers:
             monitor_before = await api(page, url, "/status")
             await expect(page.locator("#speed-start")).to_be_enabled()
+            await page.evaluate("() => {speedSockets=[];}")
             await page.locator("#speed-start").click()
             await expect(page.locator("#speed-result-heading")).to_contain_text("Latest attempt: completed", timeout=65000)
+            await page.wait_for_function("() => speedSockets.length===9 && speedSockets.every(s=>s.closed)")
+            assert await page.evaluate("() => speedSockets.every(s=>s.code===1000) && speedSockets.slice(1,5).every(s=>s.clean)"), await page.evaluate("speedSockets")
             await page.locator("#speed-details>summary").click()
             await expect(page.locator(".speed-chart circle")).to_have_count(20)
             await page.locator(".speed-chart circle").first.focus()
@@ -737,7 +751,7 @@ async def run_browser(browser_type, args, primary, peer, report):
         assert not errors, errors
         assert not external, external
         report.append({"browser": browser_type.name, "version": browser.version, "checks": checks,
-                       "full_transfers": not args.skip_transfers, "page_errors": errors, "external_requests": external,
+                       "full_transfers": not args.skip_transfers, "speedtest_frame_delay_seconds": 0.0625, "page_errors": errors, "external_requests": external,
                        "asset_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((ROOT / "connectivity/static").iterdir())}})
     except BaseException:
         await page.screenshot(path=str(screenshots / "failure.png"), full_page=True)

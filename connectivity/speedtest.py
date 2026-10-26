@@ -5,6 +5,8 @@ import secrets
 import time
 import uuid
 
+from aiohttp import WSCloseCode
+
 from .config import Problem
 from .history import stamp
 from .speed_protocol import PROFILE, CHUNK, Sender, Meter, SpeedError, integer, validate_metric, validate_rtt
@@ -73,6 +75,28 @@ class Run:
             async with asyncio.timeout(1):
                 await self.control.send_json({"event": event, **data})
 
+    async def close_connection(self, connection, code=1000, force=False):
+        ws, transport = connection["ws"], connection["transport"]
+        if force and transport:
+            transport.abort()
+        if connection["close_task"] is None:
+            async def close():
+                try:
+                    async with asyncio.timeout(1):
+                        receiver = connection.get("receive_timeout")
+                        if receiver is not None:
+                            receiver.reschedule(asyncio.get_running_loop().time())
+                            await connection["receive_done"].wait()
+                        if ws.prepared:
+                            await ws.close(code=code, drain=False)
+                except (TimeoutError, ConnectionError, RuntimeError):
+                    pass
+                finally:
+                    if transport and ws.close_code in (None, WSCloseCode.ABNORMAL_CLOSURE):
+                        transport.abort()
+            connection["close_task"] = asyncio.create_task(close())
+        await asyncio.shield(connection["close_task"])
+
     async def close_data(self, code=1000, force=False):
         self.ending_data = True
         for channel in self.channels.values():
@@ -82,17 +106,9 @@ class Run:
             await asyncio.gather(*self.tasks, return_exceptions=True)
         self.tasks.clear()
         channels = list(self.channels.values())
-        if force:
-            for channel in channels:
-                if channel["transport"]: channel["transport"].abort()
         try:
-            async with asyncio.timeout(1):
-                await asyncio.gather(*(c["ws"].close(code=code, drain=False) for c in channels), return_exceptions=True)
-        except TimeoutError:
-            pass
+            await asyncio.gather(*(self.close_connection(c, code, force) for c in channels))
         finally:
-            for channel in channels:
-                if channel["transport"]: channel["transport"].abort()
             self.channels.clear()
 
     async def pump(self, channel):
@@ -285,7 +301,10 @@ class SpeedManager:
             if not run.cancel_reason:
                 run.cancel_reason = (outcome, code, message)
                 run.task.cancel()
-            await asyncio.shield(run.finished.wait())
+            async def finish_cancel():
+                await asyncio.gather(run.task, return_exceptions=True)
+                await self.finish(run, *run.cancel_reason)
+            await asyncio.shield(asyncio.create_task(finish_cancel()))
         else:
             await self.finish(run, outcome, code, message)
         return run.view()
@@ -315,18 +334,7 @@ class SpeedManager:
                 if not force: await run.notify("terminal", result=result)
             except (TimeoutError, ConnectionError, RuntimeError):
                 pass
-            connections = list(run.connections.items())
-            if force:
-                for _,transport in connections:
-                    if transport: transport.abort()
-            try:
-                async with asyncio.timeout(1):
-                    await asyncio.gather(*(ws.close(code=4001 if outcome == "cancelled" else 1000, drain=False) for ws,_ in connections if ws.prepared), return_exceptions=True)
-            except TimeoutError:
-                pass
-            finally:
-                for _,transport in connections:
-                    if transport: transport.abort()
+            await asyncio.gather(*(run.close_connection(c, 4001 if outcome == "cancelled" else 1000, force) for c in list(run.connections.values())))
             if run.mode == "node" and run.peer and self.generations.get(run.peer["id"]) == run.peer_generation:
                 self.latest[run.peer["id"]] = result
             elif run.mode != "node":

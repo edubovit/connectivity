@@ -140,7 +140,7 @@ Run from the repository root:
 
 ```sh
 python -m pytest -q
-node --test tests/latency_chart.test.cjs tests/drag_order.test.cjs tests/select_control.test.cjs tests/speed_browser.test.cjs
+node --test tests/*.test.cjs
 python -m pip check
 git diff --check
 ```
@@ -152,8 +152,8 @@ git diff --check
 | `test_history_engine.py` | Scheduling/freshness, edits, clock/gap handling, retention and numeric queries |
 | `test_api.py`, `test_proxy.py` | Auth/CSRF/Host, JSON limits, conflict semantics, API/history and prefix routing |
 | `test_cli.py` | Real child-process startup/save/restart, lock exclusion and graceful shutdown |
-| `test_speedtest.py` | Metering, peer auth/TLS/redirects, admission, channels, cancellation and cleanup |
-| `*.test.cjs` | Pure chart/reordering helpers and browser speed metering/cancellation |
+| `test_speedtest.py`, `test_speed_cleanup.py` | Metering, peer auth/TLS/redirects, admission, channels, pre-start/repeated cancellation and deadline-safe cleanup |
+| `*.test.cjs` | Chart/reordering helpers, browser speed metering/cancellation, polling navigation/restoration |
 
 Use a focused failing test to reproduce a bug, then run the full suites. Integration tests use controlled loopback fixtures; external websites are not test truth. Do not skip real ping or native filesystem failures to make a platform appear supported. Explain environmental limitations separately.
 
@@ -191,9 +191,14 @@ Full UI regression suite (use the browser environment's interpreter):
 
 ```sh
 python tools/ui_browser_check.py
+python tools/speed_ui_lifecycle_check.py
 ```
 
-Install Chromium as well as Firefox and WebKit for this suite. It starts and stops its own isolated loopback fixtures using `.venv` (override with `--python PATH`), never a production config. It covers login/session loss, all probe editors, filters, rolling history ranges and invalid durations, keyboard/pointer reordering, conflicts and failed saves, chart inspection, raw pagination, mobile layouts, peer credentials, cancellation, and full browser/node transfers. Immediate cancellation uses a pointer click; mid-transfer cancellation clicks the UI button from inside the page for deterministic phase timing under full loopback load. Full transfers can move gigabytes locally; `--skip-transfers` omits completed-transfer checks for a quick UI run. `--browsers chromium` selects one engine.
+Install Chromium as well as Firefox and WebKit for this suite. It starts and stops its own isolated loopback fixtures using `.venv` (override with `--python PATH`), never a production config. It covers login/session loss, all probe editors, filters, rolling history ranges and invalid durations, keyboard/pointer reordering, conflicts and failed saves, chart inspection, raw pagination, mobile layouts, peer credentials, cancellation, and full browser/node transfers. Immediate cancellation uses a pointer click; mid-transfer cancellation clicks the UI button from inside the page for deterministic phase timing. `--skip-transfers` omits completed-transfer checks for a quick UI run. `--browsers chromium` selects one engine.
+
+The UI suite passes `--speedtest-frame-delay 0.0625` to its isolated devserver fixtures. This paces binary sends/receives to bound the volume of payload copies produced by browser network recording. Unpaced multi-gigabit loopback traffic can saturate that recorder and delay a new upload handshake past its deadline, even when the same browser completes without network recording. The fixed production profile, four streams, receiver-counted bytes, complete measurement windows and deadlines remain unchanged. These paced tests verify protocol/UI behavior, not link capacity; their JSON reports record the fixture delay. Ordinary devserver and speedtest fixtures remain unpaced unless explicitly configured. Never relax application deadlines or measurement validation to compensate for recorder overhead.
+
+The lifecycle checker uses real loopback login/navigation with controlled speedtest GET responses and no payload transfers. It forces a state/peers continuation across reload, cancelled/failed navigation, and synthetic persisted-page restoration; it also checks hidden-tab and node-run behavior. WebKit can surface an outgoing-document fetch rejection as a Playwright page error even when JavaScript catches it. Polling therefore suspends before departure and resumes on restoration or the next rendered frame if navigation does not proceed. Tests retain page-error assertions; synthetic restoration is not a native Safari/BFCache certification.
 
 Screenshots and the JSON report go to `.local/ui-browser/`. Prefix-mode browser checks intercept an HTTPS origin and forward requests and the origin's browser cookie jar to a real loopback backend, verifying relative assets, navigation, cookie flags and APIs without changing system trust. WebKit interception does not expose its outgoing Cookie header, so the bridge supplies cookies explicitly. This is not a real TLS termination/nginx test. The suite also checks accessible control names, text size and page overflow; it is not a complete accessibility audit or a native mobile/Safari test.
 

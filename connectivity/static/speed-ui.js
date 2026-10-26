@@ -2,7 +2,7 @@
 
 const SpeedUI = (() => {
   let api, getCsrf, node, id, local, visible=false, mode="browser", peers=[], revision=null, selectedPeer="", server=null, latestBrowser=null, runner=null, details=null, timer=null, polling=false, epoch=0, starting=false;
-  let chartKey=null;
+  let chartKey=null, pollEpoch=0, suspended=false, resumeFrame=null;
   const $=name=>document.getElementById(name);
   const numeric=value=>Number.isFinite(value)?new Intl.NumberFormat(undefined,{maximumSignificantDigits:5}).format(value):"N/A";
   const bytes=value=>!Number.isFinite(value)?"—":`${numeric(value/1e6)} MB`;
@@ -68,22 +68,25 @@ const SpeedUI = (() => {
     for(const child of [...parent.children])if(!rows.includes(child))child.remove();
     rows.forEach((row,index)=>{if(parent.children[index]!==row)parent.insertBefore(row,parent.children[index]||null);});
   }
-  function schedule(){clearTimeout(timer);if(getCsrf()&&(visible||runner?.active))timer=setTimeout(poll,1000);}
+  function suspendPolling(){suspended=true;pollEpoch++;clearTimeout(timer);cancelAnimationFrame(resumeFrame);}
+  function resumePolling(){cancelAnimationFrame(resumeFrame);if(!suspended)return;suspended=false;poll();}
+  function schedule(){clearTimeout(timer);if(!suspended&&getCsrf()&&(visible||runner?.active))timer=setTimeout(poll,1000);}
   async function poll(){
-    if(polling||!getCsrf()||(!visible&&!runner?.active))return;
-    polling=true;clearTimeout(timer);const generation=epoch;
+    if(suspended||polling||!getCsrf()||(!visible&&!runner?.active))return;
+    polling=true;clearTimeout(timer);const generation=pollEpoch;
     try{
-      const state=await api("/speedtest/state");if(generation!==epoch)return;
-      const cfg=await api("/speedtest/peers");if(generation!==epoch)return;
+      const state=await api("/speedtest/state");if(generation!==pollEpoch)return;
+      const cfg=await api("/speedtest/peers");if(generation!==pollEpoch)return;
       if(state.config_revision!==cfg.revision)return;
       server=state;
       if(revision!==cfg.revision){revision=cfg.revision;peers=cfg.peers;if(!peers.some(p=>p.id===selectedPeer))selectedPeer=peers[0]?.id||"";$("speed-peer").replaceChildren(...peers.map(p=>node("option",{value:p.id,selected:p.id===selectedPeer},p.name)));}
       const latest=server.latest.find(r=>r.peer.id===selectedPeer);
-      if(!latest)details=null;
-      if(mode==="node"&&latest&&details?.id!==latest.id){try{details=await api(`/speedtest/runs/${latest.id}`);}catch(e){if(e.status!==404)throw e;details=null;}}
-      if(generation!==epoch)return;
+      let nextDetails=latest?details:null;
+      if(mode==="node"&&latest&&details?.id!==latest.id){try{nextDetails=await api(`/speedtest/runs/${latest.id}`);}catch(e){if(e.status!==404)throw e;nextDetails=null;}}
+      if(generation!==pollEpoch)return;
+      details=nextDetails;
       $("speed-error").textContent="";render();
-    }catch(error){if(generation===epoch&&getCsrf())$("speed-error").textContent=`Speedtest view is stale: ${error.message} Node tests may still be running.`;}
+    }catch(error){if(generation===pollEpoch&&getCsrf())$("speed-error").textContent=`Speedtest view is stale: ${error.message} Node tests may still be running.`;}
     finally{polling=false;schedule();}
   }
   async function start(){
@@ -129,6 +132,9 @@ const SpeedUI = (() => {
   }
   function setup(options){
     ({api,node,id,local}=options);getCsrf=options.csrf;
+    window.addEventListener("beforeunload",()=>{suspendPolling();resumeFrame=requestAnimationFrame(resumePolling);});
+    window.addEventListener("pagehide",suspendPolling);
+    window.addEventListener("pageshow",resumePolling);
     document.querySelectorAll("[data-speed-mode]").forEach(button=>button.addEventListener("click",()=>{mode=button.dataset.speedMode;details=null;render();poll();}));
     $("speed-peer").addEventListener("change",()=>{selectedPeer=$("speed-peer").value;details=null;render();poll();});
     $("speed-start").addEventListener("click",start);$("speed-cancel").addEventListener("click",cancel);$("speed-configure").addEventListener("click",editPeers);
@@ -140,6 +146,6 @@ const SpeedUI = (() => {
   }
   function show(){visible=true;document.title="Speedtest · Connectivity";$("speedtest").hidden=false;render();poll();}
   function hide(){visible=false;$("speedtest").hidden=true;if(!runner?.active)clearTimeout(timer);}
-  function reset(){epoch++;runner?.abortLocal();runner=null;latestBrowser=null;server=null;details=null;peers=[];revision=null;starting=false;selectedPeer="";mode="browser";chartKey=null;clearTimeout(timer);hide();$("peers-dialog").close();$("speed-details").open=false;for(const name of ["speed-metrics","speed-statistics","speed-charts","speed-peer-results","speed-peer"])$(name).replaceChildren();for(const name of ["speed-direction","speed-result-error","speed-live","speed-payload","speed-activity"])$(name).textContent="";$("speed-result-heading").textContent="No result yet";}
+  function reset(){epoch++;pollEpoch++;runner?.abortLocal();runner=null;latestBrowser=null;server=null;details=null;peers=[];revision=null;starting=false;selectedPeer="";mode="browser";chartKey=null;clearTimeout(timer);hide();$("peers-dialog").close();$("speed-details").open=false;for(const name of ["speed-metrics","speed-statistics","speed-charts","speed-peer-results","speed-peer"])$(name).replaceChildren();for(const name of ["speed-direction","speed-result-error","speed-live","speed-payload","speed-activity"])$(name).textContent="";$("speed-result-heading").textContent="No result yet";}
   return {setup,show,hide,reset};
 })();

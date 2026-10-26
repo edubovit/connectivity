@@ -95,6 +95,96 @@ async def configure(client, peers):
     return await response.json()
 
 
+@pytest.mark.parametrize("shutdown", [False, True])
+async def test_cancel_node_before_executor_starts(nodes, shutdown):
+    a, b = nodes
+    await configure(a, [peer(url=b.origin+'/', password='test-only-password')])
+    manager = a.app[STATE].speed
+    run = manager.start_node('peer')
+    if shutdown:
+        await asyncio.wait_for(manager.stop(), 1)
+    else:
+        result = await asyncio.wait_for(manager.cancel(run.id), 1)
+        assert result['outcome'] == 'cancelled'
+    assert run.task.cancelled()
+    assert run.finished.is_set() and run.outcome == 'cancelled'
+    assert manager.active is None
+    assert b.app[STATE].speed.active is None
+
+
+async def test_cancel_request_cancellation_does_not_strand_prestart_node(nodes):
+    a, b = nodes
+    await configure(a, [peer(url=b.origin+'/', password='test-only-password')])
+    manager = a.app[STATE].speed
+    run = manager.start_node('peer')
+    run.task.cancel()
+    request = asyncio.create_task(manager.cancel(run.id))
+    await asyncio.sleep(0)
+    request.cancel()
+    await asyncio.gather(request, return_exceptions=True)
+    await asyncio.wait_for(run.finished.wait(), 1)
+    assert manager.active is None and run.outcome == 'cancelled'
+
+
+async def test_connection_close_is_shared_and_does_not_abort_clean_transport(nodes):
+    a, _ = nodes
+    run = a.app[STATE].speed.start_browser('fixture-owner')
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class Socket:
+        prepared = True
+        close_code = None
+        calls = 0
+
+        async def close(self, **kwargs):
+            self.calls += 1
+            started.set()
+            await release.wait()
+            self.close_code = 1000
+
+    class Transport:
+        aborted = False
+
+        def abort(self):
+            self.aborted = True
+
+    ws, transport = Socket(), Transport()
+    connection = {'ws': ws, 'transport': transport, 'close_task': None}
+    owner = asyncio.create_task(run.close_connection(connection))
+    await started.wait()
+    handler = asyncio.create_task(run.close_connection(connection))
+    await asyncio.sleep(0)
+    assert not owner.done() and not handler.done()
+    release.set()
+    await asyncio.gather(owner, handler)
+    assert ws.calls == 1 and not transport.aborted
+    await run.close_connection(connection, force=True)
+    assert transport.aborted
+
+
+async def test_connection_close_timeout_aborts_transport(nodes):
+    a, _ = nodes
+    run = a.app[STATE].speed.start_browser('fixture-owner')
+
+    class Socket:
+        prepared = True
+        close_code = None
+
+        async def close(self, **kwargs):
+            await asyncio.Event().wait()
+
+    class Transport:
+        aborted = False
+
+        def abort(self):
+            self.aborted = True
+
+    transport = Transport()
+    connection = {'ws': Socket(), 'transport': transport, 'close_task': None}
+    await asyncio.wait_for(run.close_connection(connection), 1.5)
+    assert transport.aborted and connection['close_task'].done()
+
+
 async def terminal(client, rid):
     for _ in range(200):
         response=await client.get('/api/v1/speedtest/runs/'+rid)

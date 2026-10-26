@@ -97,10 +97,9 @@ class Control:
 
     async def close(self):
         self.heartbeat.cancel()
-        await asyncio.gather(self.heartbeat, return_exceptions=True)
-        await self.ws.close()
         self.reader.cancel()
-        await asyncio.gather(self.reader, return_exceptions=True)
+        await asyncio.gather(self.heartbeat, self.reader, return_exceptions=True)
+        await self.ws.close()
 
 
 class Latency:
@@ -236,6 +235,7 @@ async def run_peer(manager, run, peer):
     control = None
     data = None
     latency = None
+    sockets = []
 
     async def call(path, method="GET", body=None):
         headers = {"X-CSRF-Token": csrf or ""}
@@ -255,19 +255,16 @@ async def run_peer(manager, run, peer):
 
     async def connect(role, direction=None, index=None):
         ws = await session.ws_connect(api+"/speedtest/channel", origin=origin, compress=0, max_msg_size=CHUNK+1, timeout=aiohttp.ClientWSTimeout(ws_close=.5))
-        try:
-            if ws._response.headers.get("Sec-WebSocket-Extensions"):
-                raise SpeedError("compression", "Compressed speedtest channels are not supported")
-            hello = {"protocol": VERSION, "run_id": remote_id, "csrf": csrf, "channel": role}
-            if role == "data": hello.update(direction=direction,index=index)
-            await ws.send_json(hello)
-            ready = await ws.receive_json(timeout=3)
-            if ready.get("type") != "ready" or ready.get("instance") != run.responder or ready.get("run_id") != remote_id:
-                raise SpeedError("peer_protocol", "Peer channel identity did not match")
-            return ws
-        except BaseException:
-            await ws.close()
-            raise
+        sockets.append(ws)
+        if ws._response.headers.get("Sec-WebSocket-Extensions"):
+            raise SpeedError("compression", "Compressed speedtest channels are not supported")
+        hello = {"protocol": VERSION, "run_id": remote_id, "csrf": csrf, "channel": role}
+        if role == "data": hello.update(direction=direction,index=index)
+        await ws.send_json(hello)
+        ready = await ws.receive_json(timeout=3)
+        if ready.get("type") != "ready" or ready.get("instance") != run.responder or ready.get("run_id") != remote_id:
+            raise SpeedError("peer_protocol", "Peer channel identity did not match")
+        return ws
 
     def update(phase, live):
         if phase in ("upload", "upload_warmup"):
@@ -348,24 +345,35 @@ async def run_peer(manager, run, peer):
     except (aiohttp.ClientError, OSError, ssl.SSLError):
         raise SpeedError("peer_network", "Could not communicate with the configured peer") from None
     finally:
-        if latency:
-            try: await latency.stop()
-            except Exception: pass
-        if data:
-            data.closing = True
-            for sender in data.senders: sender.stop()
-            for task in data.tasks: task.cancel()
-            await asyncio.gather(*data.tasks, return_exceptions=True)
-        try:
-            async with asyncio.timeout(max(.001,min(2,run.limit-(time.monotonic()-run.clock)))):
-                if remote_id:
-                    try: await call("/speedtest/runs/"+remote_id,"DELETE",{})
-                    except Exception: pass
-                if csrf: await call("/session","DELETE",{})
-        except (Exception, asyncio.CancelledError):
-            pass
-        if time.monotonic()-run.clock >= run.limit:
-            await session.close()
-        if data: await data.close()
-        if control: await control.close()
-        await session.close()
+        async def cleanup():
+            tasks = [control.heartbeat, control.reader] if control else []
+            if latency and latency.task: tasks.append(latency.task)
+            if data:
+                data.closing = True
+                for sender in data.senders: sender.stop()
+                tasks.extend(data.tasks)
+            for task in tasks: task.cancel()
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                async with asyncio.timeout(max(0,min(2,run.limit-(time.monotonic()-run.clock)))):
+                    if remote_id:
+                        try: await call("/speedtest/runs/"+remote_id,"DELETE",{})
+                        except Exception: pass
+                    if csrf:
+                        try: await call("/session","DELETE",{})
+                        except Exception: pass
+                    await asyncio.gather(*(item.close() for item in (data, control) if item), return_exceptions=True)
+            except (Exception, asyncio.CancelledError):
+                pass
+            finally:
+                try: await session.close()
+                finally:
+                    for ws in sockets: ws._response.close()
+
+        cleanup_task = asyncio.create_task(cleanup())
+        cancelled = False
+        while not cleanup_task.done():
+            try: await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError: cancelled = True
+        cleanup_task.result()
+        if cancelled: raise asyncio.CancelledError

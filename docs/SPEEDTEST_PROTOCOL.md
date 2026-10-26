@@ -100,6 +100,8 @@ The node watchdog validates owner-session lifetime, setup/channel deadlines, con
 
 Cancellation stops producers, closes all registered and pending sockets, and does not release the slot until logical transfer work stops. Expired runs abort transports rather than extending the deadline for a polite close. Peer cancellation/logout is best-effort within the remaining cleanup budget; cookie jars are isolated and disposed. The normal auth-session expiry/cap bounds remnants after an abrupt crash.
 
+Each server connection has one shared, bounded close operation. Its receive loop is interrupted before the closing handshake, and the request handler waits for that operation before returning. Clean closure is not followed by an unconditional transport abort; failed or deadline-expired closure still aborts. Node cancellation also finalizes a task cancelled before it first runs. Peer cleanup survives repeated cancellation, always disposes its session/connector, and keeps the node's slot until child tasks stop.
+
 ## Reverse proxy
 
 Preserve Host and the configured origin, overwrite `X-Real-IP`, disable compression and request/response buffering, and allow at least 60 seconds of protocol lifetime. The [nginx example](REVERSE_PROXY.md) uses generic HTTP/WebSocket forwarding; only the application's authenticated channel route accepts an upgrade. Proxy inactivity timeouts are distinct from the app's overall run deadline. The ordinary application JSON request limit remains 1 MiB; no global body-limit or CORS relaxation is necessary. The page CSP includes only its validated `ws`/`wss` origin in addition to `'self'`.

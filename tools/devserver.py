@@ -8,7 +8,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from aiohttp import web
+from aiohttp import WSMsgType, web
 import yaml
 
 from connectivity.config import ConfigStore
@@ -18,6 +18,18 @@ from tests.helpers import Certificates, configuration
 
 
 async def main(args):
+    if args.speedtest_frame_delay:
+        class PacedWebSocket(web.WebSocketResponse):
+            async def send_bytes(self, data, compress=None):
+                await asyncio.sleep(args.speedtest_frame_delay)
+                await super().send_bytes(data, compress=compress)
+
+            async def receive(self, timeout=None):
+                message = await super().receive(timeout=timeout)
+                if message.type == WSMsgType.BINARY:
+                    await asyncio.sleep(args.speedtest_frame_delay)
+                return message
+        web.WebSocketResponse = PacedWebSocket
     path = Path(args.config).absolute()
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
@@ -60,4 +72,8 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--http-port", type=int, default=8091)
     parser.add_argument("--tls-port", type=int, default=8092)
-    asyncio.run(main(parser.parse_args()))
+    parser.add_argument("--speedtest-frame-delay", type=float, default=0, help="Test-only delay per binary frame to bound browser recorder traffic")
+    args = parser.parse_args()
+    if not 0 <= args.speedtest_frame_delay <= 1:
+        parser.error("--speedtest-frame-delay must be between 0 and 1 second")
+    asyncio.run(main(args))
