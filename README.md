@@ -27,10 +27,10 @@ Clone or download [this repository](https://github.com/edubovit/connectivity), t
 python3.14 -m venv .venv
 .venv/bin/python -m pip install -r requirements.lock
 .venv/bin/python -m pip install --no-deps .
-mkdir -p .local
-chmod 700 .local
-cp connectivity/example.yml .local/config.yml
-chmod 600 .local/config.yml
+mkdir -p state
+chmod 700 state
+cp connectivity/example.yml state/config.yml
+chmod 600 state/config.yml
 ```
 
 ### Windows PowerShell
@@ -39,22 +39,22 @@ chmod 600 .local/config.yml
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.lock
 .\.venv\Scripts\python.exe -m pip install --no-deps .
-New-Item -ItemType Directory -Force .local
-Copy-Item connectivity\example.yml .local\config.yml
+New-Item -ItemType Directory -Force state
+Copy-Item connectivity\example.yml state\config.yml
 ```
 
 On Windows, `python` must select Python 3.14. Restrict the configuration file and its directory to your account.
 
-**Before starting**, edit `.local/config.yml` and replace `CHANGE_ME_BEFORE_STARTING` with a strong, unique password.
+**Before starting**, edit `state/config.yml` and replace `CHANGE_ME_BEFORE_STARTING` with a strong, unique password.
 
 ```sh
 # Linux / macOS
-.venv/bin/python -m connectivity --config .local/config.yml
+.venv/bin/python -m connectivity --config state/config.yml
 ```
 
 ```powershell
 # Windows
-.\.venv\Scripts\python.exe -m connectivity --config .local\config.yml
+.\.venv\Scripts\python.exe -m connectivity --config state\config.yml
 ```
 
 Open **http://127.0.0.1:8080**, sign in, and select **Add resource**. Stop with Ctrl+C.

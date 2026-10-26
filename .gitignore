@@ -10,6 +10,7 @@ dist/
 config.yml
 *.lockfile
 .local/
+/state/
 .playwright-mcp/
 .env
 .env.*
