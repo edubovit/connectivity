@@ -1,8 +1,12 @@
-# HTTPS reverse proxy
+# HTTPS with nginx
 
-Connectivity serves HTTP. To encrypt browser and peer traffic, put a trusted **same-machine** HTTPS proxy in front of a loopback-only backend. This example uses nginx; adapt it to your host rather than replacing existing sites or global configuration.
+[Guides](README.md) · [Linux service](SYSTEMD_SERVICE.md)
 
-## App configuration
+Use a trusted **same-machine proxy**, a valid certificate and a loopback-only backend. Adapt the example without replacing existing sites or certificate-renewal rules.
+
+## 1. Configure Connectivity
+
+Stop the app and update only its `server` section; preserve credentials and resources:
 
 ```yaml
 server:
@@ -12,13 +16,11 @@ server:
   public_url: https://monitor.example/
 ```
 
-Replace `monitor.example` with your actual hostname and keep the existing auth, UI, resources and peers. Stop before editing YAML, then restart. App restart clears RAM history/results/sessions; an nginx-only reload does not.
+Replace the hostname, then restart. HTTPS mode accepts this exact public hostname and port; `allowed_hosts` does not add aliases.
 
-`public_url` requires HTTPS and loopback binding. Its hostname and port define the accepted Host authority and browser Origin. `allowed_hosts` does not add aliases in this mode. The app ignores forwarded Host/protocol headers; do not use them to derive its public URL.
+## 2. Configure nginx
 
-## nginx example
-
-The `map` belongs in nginx's `http` context, commonly in a site file included from it. Install a valid certificate for your hostname before enabling the site. Replace the example hostname/certificate paths and check for existing maps/listener conflicts.
+Install the certificate first. Place the map in nginx's `http` context and the server block in the appropriate site configuration.
 
 ```nginx
 map $http_upgrade $connectivity_connection_upgrade {
@@ -29,10 +31,8 @@ map $http_upgrade $connectivity_connection_upgrade {
 server {
     listen 443 ssl;
     server_name monitor.example;
-
     ssl_certificate /etc/letsencrypt/live/monitor.example/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/monitor.example/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
 
     location / {
         proxy_pass http://127.0.0.1:8080;
@@ -52,33 +52,19 @@ server {
 }
 ```
 
-Add an IPv6 listener only if needed and supported by your DNS/network. Preserve the client's Origin and the full Host, including a non-default public port. Keep `proxy_pass` **without a URI suffix** so the entire request path reaches the app. Do not add broad CORS or disable app authentication to fix a proxy mismatch.
+Keep the full Host and Origin. Do not add a URI suffix to `proxy_pass`: the complete request path must reach the app. WebSocket forwarding is needed for speedtests; do not remove authentication or enable broad CORS to work around errors.
 
-HTTP/1.1 and Upgrade/Connection forwarding enable WebSockets. Only an authenticated, run-bound speedtest channel accepts an upgrade. Request/response buffering and caching are off to avoid proxy spooling of credential-bearing requests and to allow streaming; compression remains off. The 1 MiB JSON body limit is not a WebSocket transfer quota. Proxy timeouts are inactivity limits, separate from the app's 60-second speedtest deadline.
-
-Validate before graceful reload:
+## 3. Activate and verify
 
 ```sh
 sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-Poll for readiness after reload; it is asynchronous. Do not restart unrelated services or replace a working multi-site nginx config.
+Check the public URL, login, dashboard assets and history. Check speedtest connectivity only when bandwidth use is acceptable. Keep certificate renewal working, including its nginx reload hook. HTTPS encrypts traffic; it does not replace network restrictions.
 
-## Path prefixes and non-default ports
+### Shared sites and alternate ports
 
-For a shared site, set `public_url: https://monitor.example/monitor/` and use `location ^~ /monitor/` with the same proxy directives. The prefix remains in the upstream URI. The app redirects `/monitor` to its canonical trailing-slash path when that request reaches it; on a shared site, add an exact `/monitor` redirect to `/monitor/` if the request would otherwise go elsewhere. Leave all unrelated locations intact.
+For `/monitor/`, use `public_url: https://monitor.example/monitor/` and `location ^~ /monitor/` with the same directives. On a shared site, add `location = /monitor { return 308 /monitor/; }` so the bare prefix reaches the right application. Preserve unrelated locations.
 
-For a public port such as8443, set `public_url: https://monitor.example:8443/` and preserve that authority through the proxy. The internal listener port need not be the public port. Configure speedtest peers with the exact canonical base URL; peer clients reject redirects. Changing a peer URL requires password re-entry.
-
-## Certificates and security
-
-- Use a certificate trusted by browsers and peers, with correct hostname and validity dates. Never disable verification as a workaround.
-- Keep the host's existing working certificate-renewal method. Standalone ACME needs temporary external port80 reachability; webroot/DNS methods have different requirements. This guide does not prescribe changing firewall/NAT or deleting challenge routes.
-- After successful renewal, validate/reload nginx so it serves the new certificate. Test renewal and the deploy hook according to your installed certificate client's version; a timer alone does not prove either works.
-- Only the proxy should expose HTTPS. Keep the backend loopback-only and run Connectivity as an unprivileged account.
-- nginx must overwrite `X-Real-IP`; the app uses it for login throttling inside its explicit local-proxy trust boundary. Local processes remain trusted. Do not trust arbitrary forwarded values from remote clients.
-- Cookies are host-only, Secure, HttpOnly, SameSite=Strict and scoped to the configured base path. Exact Host/Origin, API authentication and CSRF checks remain mandatory.
-- Owner and peer passwords remain plaintext in restricted YAML. HTTPS protects transport, not the config file; use a strong unique password and appropriate network restrictions. This does not turn the private tool into a multi-user public service.
-
-Validate login/logout, anonymous API rejection, assets/history, cookie scope and WebSocket cancellation through the real public URL. See [CONTRIBUTING.md](../CONTRIBUTING.md#service-deployment-and-maintenance) for service hardening, ping permissions and upgrade checks.
+For port 8443, use that port in the nginx listener, public URL and peer URLs. Peers require the canonical URL and do not follow redirects.

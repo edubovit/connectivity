@@ -1,29 +1,27 @@
 # Connectivity
 
-Connectivity is a small, self-hosted network monitor with a browser dashboard. It checks whether your websites, servers, and network devices are reachable **from the machine running it**, and shows availability, latency, and recent failures.
+Private, self-hosted monitoring for websites, servers and network devices. See what is reachable **from the machine running Connectivity**, how quickly it responds, and when it fails.
 
-One Python process. No database, frontend build, or external service.
-
-![Connectivity dashboard showing online and offline local test resources](docs/images/dashboard.png)
+![Connectivity dashboard with fully observed local test resources](docs/images/dashboard.png)
 
 ## Features
 
-- **Ping, HTTP, TCP, and TLS checks**, each with its own target, interval, and timeout.
-- Up to **50 resources and 200 checks**, with independent scheduling.
-- Swiss After Dark dashboard: index-rail navigation, resource tiles, latency charts, certificate expiry, and full-width availability timelines. One hour of detailed results and fourteen days of minute summaries.
-- Add, edit, and reorder resources and checks in the browser. Settings are saved to YAML.
-- Manual **browser-to-server and server-to-server speed tests**, measuring download/upload throughput and idle/loaded latency.
-- One owner password, with optional HTTPS reverse-proxy support at a root URL or under a path prefix.
+- **Ping, HTTP, TCP and TLS** checks, with individual schedules and timeouts.
+- Up to **50 resources and 200 checks**. Add, edit and reorder them in the browser.
+- Dark, responsive dashboard with availability, latency, certificate expiry and failure details.
+- Rolling history: one hour of detailed results and fourteen days of summaries. Choose presets or **Show last … hours/days**.
+- Manual browser-to-server and server-to-server speed tests, including latency under load.
+- One owner password; optional HTTPS at a root URL or path prefix.
 
-**History and sessions live in memory. Restarting clears them.** Connectivity has no alerts, persistent result database, or multi-user accounts. Speed tests can saturate your connection and transfer gigabytes.
+**Restarting clears history, sessions and speedtest results.** There are no alerts, persistent result storage or separate user accounts. Speed tests can saturate a connection and transfer gigabytes.
 
-## Run
+## Install and run
 
-You need **Python 3.14** with pip and venv. Linux also needs `iputils-ping`; Windows and macOS use their system ping tools. Run as a regular user, not root or administrator.
+Install **Python 3.14**, pip and venv. Linux also needs `iputils-ping`. Run Connectivity as a regular user.
 
-From a checkout, install the app and copy its example configuration:
+Clone or download [this repository](https://github.com/edubovit/connectivity), then open a terminal in its directory.
 
-**Linux / macOS**
+### Linux / macOS
 
 ```sh
 python3.14 -m venv .venv
@@ -35,55 +33,41 @@ cp connectivity/example.yml .local/config.yml
 chmod 600 .local/config.yml
 ```
 
-**Windows PowerShell**
+### Windows PowerShell
 
 ```powershell
-py -3.14 -m venv .venv
+python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.lock
 .\.venv\Scripts\python.exe -m pip install --no-deps .
 New-Item -ItemType Directory -Force .local
 Copy-Item connectivity\example.yml .local\config.yml
 ```
 
-On Windows, restrict the config file and its directory to your account using file permissions.
+On Windows, `python` must select Python 3.14. Restrict the configuration file and its directory to your account.
 
-Edit `.local/config.yml` and replace `CHANGE_ME_BEFORE_STARTING` with a strong, unique password. Then start the app:
+**Before starting**, edit `.local/config.yml` and replace `CHANGE_ME_BEFORE_STARTING` with a strong, unique password.
 
 ```sh
+# Linux / macOS
 .venv/bin/python -m connectivity --config .local/config.yml
 ```
 
-On Windows:
-
 ```powershell
-.\.venv\Scripts\python.exe -m connectivity --config .local/config.yml
+# Windows
+.\.venv\Scripts\python.exe -m connectivity --config .local\config.yml
 ```
 
-Open **http://127.0.0.1:8080**, sign in, and add your first resource. Stop with Ctrl+C.
+Open **http://127.0.0.1:8080**, sign in, and select **Add resource**. Stop with Ctrl+C.
 
 ## Configure
 
-The minimal configuration is:
+Use the dashboard to manage checks, peers and settings. Changes are saved to YAML when you select Save. Checks default to a **30-second interval** and **5-second timeout**; dashboard refresh defaults to **30 seconds**.
 
-```yaml
-version: 1
-server:
-  host: 127.0.0.1
-  port: 8080
-  allowed_hosts: []
-auth:
-  password: "CHANGE_ME_BEFORE_STARTING"
-ui:
-  refresh_interval_seconds: 30
-resources: []
-```
+- **Availability** excludes unknown time. **Coverage** tells you how much of the selected window was observed.
+- **Reordering:** drag a grip or use its keyboard controls, then save the order.
+- **Peers:** Speedtest → Configure peers; enter the other node's exact URL and owner password. This credential grants full owner access.
+- **Manual YAML edits:** stop the app, edit the file, then restart. Keep existing resources and credentials.
 
-- **Checks:** use the dashboard to add a resource and its checks. Ping needs a host; TCP/TLS need a host and port; HTTP needs a URL, method, and expected status. Default interval is 30 seconds, timeout 5 seconds. HTTP does not follow redirects.
-- **Status:** a failed check makes its resource offline; missing or invalid observations are unknown, not downtime. Availability excludes unknown time; coverage shows how much of the selected range was observed.
-- **Saved changes:** browser edits persist automatically when you save. Renames and reordering preserve history; measurement changes reset affected history. Stop the app before manually editing YAML, then restart.
-- **Speedtest peers:** open Speedtest → Configure peers and enter another Connectivity node's canonical URL and owner password. That password grants full owner access, not just speed testing.
-- **Network access:** the default listener is local-only. For a trusted LAN, choose a private interface and add the exact browser-facing DNS name to `allowed_hosts`; restrict access with your firewall. For HTTPS, keep the backend on loopback and follow the [reverse-proxy guide](docs/REVERSE_PROXY.md).
+Keep this a private tool. Passwords are stored in the configuration file, and HTTP does not encrypt them. Restrict access with your network/firewall; use HTTPS for remote browser and peer connections.
 
-**Keep this a private tool.** Passwords are stored in plaintext in the restricted YAML; direct HTTP does not encrypt passwords or cookies. Do not expose the bare HTTP listener to the internet. HTTPS protects transport, but does not add access restrictions or multiple users.
-
-For development, testing, configuration limits, and service deployment, see [CONTRIBUTING.md](CONTRIBUTING.md).
+[Configuration](docs/CONFIGURATION.md) · [HTTPS](docs/REVERSE_PROXY.md) · [Linux service](docs/SYSTEMD_SERVICE.md) · [Upgrades](docs/UPGRADING.md)
