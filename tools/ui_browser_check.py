@@ -119,6 +119,31 @@ async def layout(page):
     }""")
     assert issues == {"overflow": False, "unnamed": [], "tiny": [], "wrappedMetrics": []}, issues
     assert await page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "dark"
+    await expect(page.locator(".resource-index")).to_have_count(0)
+    tiles = await page.locator(".resource-tile:visible").evaluate_all("""elements => elements.map(element => {
+      const head = element.querySelector('.resource-head'), title = head.querySelector('.resource-name');
+      const edit = element.querySelector('.card-actions button.edit-resource');
+      const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+      const button = edit?.getBoundingClientRect(), border = edit && getComputedStyle(edit);
+      return {
+        titleFirst: head.firstElementChild === title && getComputedStyle(head).gridRowStart === '1',
+        editButton: Boolean(edit),
+        upperRight: !edit?.getClientRects().length ||
+          button.top <= title.getBoundingClientRect().bottom &&
+          Math.abs(box.right-button.right-parseFloat(style.paddingRight)-parseFloat(style.borderRightWidth)) < 1,
+        outlined: !edit?.getClientRects().length || parseFloat(border.borderTopWidth) >= 1 &&
+          border.borderTopStyle === 'solid' && !['transparent','rgba(0, 0, 0, 0)'].includes(border.borderTopColor)
+      };
+    })""")
+    assert all(all(check.values()) for check in tiles), tiles
+    grips = await page.locator(".drag-handle:visible").evaluate_all("""elements => elements.map(element => {
+      const dots = [...element.querySelectorAll('svg circle')];
+      return dots.length === 6 && new Set(dots.map(dot=>dot.getAttribute('cx'))).size === 2 &&
+        new Set(dots.map(dot=>dot.getAttribute('cy'))).size === 3;
+    })""")
+    assert all(grips), grips
+    rows = await page.locator(".check-fields.reorder-item:visible").evaluate_all("elements => elements.map(e=>e.getBoundingClientRect().height)")
+    assert all(0 < height < 100 for height in rows), rows
     timelines = await page.locator(".timeline:visible").evaluate_all("""elements => elements.map(element => {
       const card = element.closest('article'), box = card.getBoundingClientRect(), style = getComputedStyle(card);
       const bar = element.querySelector('svg').getBoundingClientRect();
@@ -136,6 +161,30 @@ async def layout(page):
       };
     })""")
     assert all(all(check.values()) for check in timelines), timelines
+
+
+async def rendered_range(page, seconds, custom=False, after=None, details=False):
+    result = await page.wait_for_function("""({seconds, custom, after, details}) => {
+      if (busy || !lastRange || !statusData || selected.seconds !== seconds) return false;
+      const active = document.querySelector('#range-buttons [aria-pressed="true"]');
+      if (active?.dataset.range !== (custom ? 'custom' : String(seconds))) return false;
+      const from = Date.parse(lastRange.from), to = Date.parse(lastRange.to);
+      if (Math.abs(to-from-seconds*1000) > 1 || to !== Date.parse(statusData.server_time) ||
+          after && to <= Date.parse(after)) return false;
+      const axes = [...document.querySelectorAll('#content .timeline-labels, #content .latency-x-labels')];
+      if (!axes.length || !axes.every(axis => {
+        const ticks = axis.querySelectorAll('time');
+        return ticks.length === 3 && Date.parse(ticks[0].dateTime) === from && Date.parse(ticks[2].dateTime) === to;
+      })) return false;
+      const charts = [...document.querySelectorAll('#content .latency-chart')];
+      if (details && (!charts.length || !charts.every(chart => chart.dataset.range === JSON.stringify(selected) &&
+          chart.querySelector('.latency-plot').getBoundingClientRect().width > 0))) return false;
+      return {from:lastRange.from, to:lastRange.to};
+    }""", arg={"seconds": seconds, "custom": custom, "after": after, "details": details})
+    value = await result.json_value()
+    await result.dispose()
+    await expect(page.locator("#range-label")).to_contain_text("Rolling")
+    return value
 
 
 async def select_value(page, select, value):
@@ -191,6 +240,14 @@ async def run_browser(browser_type, args, primary, peer, report):
     try:
         await page.goto(url)
         await expect(page.locator("#login")).to_be_visible()
+        await expect(page.locator(".login-intro")).to_have_count(0)
+        await expect(page.locator("#login h1")).to_have_count(1)
+        await expect(page.locator("#login-form h1")).to_have_text("Sign in")
+        assert await page.locator("#login-form h1").evaluate("e=>getComputedStyle(e).fontFamily.startsWith('Arial')")
+        illustration = page.locator(".login-illustration")
+        await expect(illustration).to_be_visible()
+        assert await illustration.evaluate("e=>Boolean((e.matches('svg')?e:e.querySelector('svg'))?.closest('[aria-hidden=\"true\"]'))")
+        await expect(page.locator("#login")).not_to_contain_text("A clear view")
         await page.emulate_media(color_scheme="light", reduced_motion="reduce")
         await snapshot("login")
         await page.set_viewport_size({"width": 320, "height": 844})
@@ -202,6 +259,10 @@ async def run_browser(browser_type, args, primary, peer, report):
         await page.locator("#password").fill(PASSWORD)
         await page.locator("#login-form button").click()
         await expect(page.locator("#content")).to_contain_text("No resources yet")
+        await expect(page.locator("#navigation nav svg.nav-icon")).to_have_count(3)
+        for control, label in (("nav-resources", "Resources"), ("nav-speedtest", "Speedtest"), ("settings", "Settings")):
+            await expect(page.locator(f"#{control}")).to_have_text(label)
+            await expect(page.locator(f"#{control} svg.nav-icon")).to_have_attribute("aria-hidden", "true")
         await page.locator(".skip-link").focus()
         await expect(page.locator(".skip-link")).to_have_css("clip-path", "none")
         await page.locator(".skip-link").press("Enter")
@@ -209,7 +270,7 @@ async def run_browser(browser_type, args, primary, peer, report):
         await expect(page.locator(".skip-link")).to_have_css("clip-path", "inset(50%)")
         assert await page.evaluate("[percent(null),percent(0),percent(1),percent(.9999999),percent(.0000001)]") == ["N/A", "0%", "100%", "<100%", "<0.01%"]
         await snapshot("empty")
-        await passed("login rejection, authentication, empty state")
+        await passed("decorative login, Arial Sign in heading, labeled navigation icons, login rejection, authentication, empty state")
         assert await page.locator(".login").evaluate("e=>getComputedStyle(e).fontFamily") == "Arial, Helvetica, sans-serif"
 
         await page.locator("#add-resource").click()
@@ -322,8 +383,9 @@ async def run_browser(browser_type, args, primary, peer, report):
         await page.locator("#save-resource-order").click()
         await expect(page.locator("#resource-order-panel")).not_to_be_visible()
         await expect(page.locator(".resource-name").first).to_have_text("Unavailable service")
-        assert await page.locator(".resource-index").all_text_contents() == ["01", "02"]
+        await expect(page.locator(".resource-index")).to_have_count(0)
         await page.locator("#reorder-resources").click()
+        await snapshot("resource-reorder")
         handle = page.locator(".resource-card .drag-handle").first
         box = await handle.bounding_box()
         target = await page.locator(".resource-card").last.bounding_box()
@@ -339,6 +401,9 @@ async def run_browser(browser_type, args, primary, peer, report):
         await page.get_by_role("button", name="Edit Office network", exact=True).click()
         await page.locator("#resource-name").fill("Office <network>")
         await page.locator("#reorder-checks").click()
+        await expect(page.locator(".check-fields.reorder-item")).to_have_count(4)
+        await expect(page.locator(".check-editor[open]")).to_have_count(0)
+        await snapshot("check-reorder")
         await page.locator(".check-fields .drag-handle").first.press("End")
         await page.locator("#done-check-order").click()
         await page.locator("#save-resource").click()
@@ -398,20 +463,69 @@ async def run_browser(browser_type, args, primary, peer, report):
 
         for seconds in (86400, 1209600, 3600):
             await page.locator(f'[data-range="{seconds}"]').click()
-            await expect(page.locator(f'[data-range="{seconds}"]')).to_have_attribute("aria-pressed", "true")
+            await rendered_range(page, seconds, details=True)
             await snapshot(f"details-{seconds}")
         await page.locator('[data-range="custom"]').click()
-        await page.locator('#custom-range button').click()
-        await expect(page.locator('[data-range="custom"]')).to_have_attribute("aria-pressed", "true")
+        await expect(page.locator("#custom-range")).to_be_visible()
+        await expect(page.locator("#range-count")).to_have_attribute("type", "text")
+        await expect(page.locator("#range-count")).to_have_value("6")
+        await expect(page.locator("#range-unit")).to_have_value("hours")
+        assert await page.locator("#range-unit option").evaluate_all("options=>options.map(e=>e.value)") == ["hours", "days"]
+        await expect(page.locator('#custom-range input[type="datetime-local"], #range-start, #range-end, #offset-start, #offset-end')).to_have_count(0)
+        await rendered_range(page, 3600, details=True)
+
+        async def invalid_range(value, unit, active_seconds, custom):
+            saved = await page.evaluate("sessionStorage.getItem('connectivity-range')")
+            await page.locator("#range-count").fill(value)
+            await select_value(page, page.locator("#range-unit"), unit)
+            await page.locator("#custom-range").get_by_role("button", name="Apply", exact=True).click()
+            await expect(page.locator("#range-error.error")).to_be_visible()
+            await expect(page.locator("#range-error")).not_to_have_text("")
+            await expect(page.locator("#range-count")).to_have_value(value)
+            await rendered_range(page, active_seconds, custom=custom, details=True)
+            assert await page.evaluate("sessionStorage.getItem('connectivity-range')") == saved, (value, unit)
+
+        await invalid_range("", "hours", 3600, False)
+        await page.locator("#range-count").fill("6")
+        await page.locator("#custom-range").get_by_role("button", name="Apply", exact=True).click()
+        initial = await rendered_range(page, 21600, custom=True, details=True)
+        await expect(page.locator("#range-error")).to_have_text("")
+        saved = await page.evaluate("sessionStorage.getItem('connectivity-range')")
+        assert json.loads(saved)["selected"]["seconds"] == 21600
+        refreshed = await rendered_range(page, 21600, custom=True, after=initial["to"], details=True)
         await page.reload()
-        await expect(page.locator('[data-range="custom"]')).to_have_attribute("aria-pressed", "true")
+        await rendered_range(page, 21600, custom=True, after=refreshed["to"], details=True)
+        assert await page.evaluate("sessionStorage.getItem('connectivity-range')") == saved
         await page.locator('[data-range="custom"]').click()
-        await page.locator("#range-start").evaluate("input => {input.value='2026-03-29T02:30:00';input.dispatchEvent(new Event('input',{bubbles:true}));}")
-        await page.locator("#offset-start").fill("+01:00")
-        await page.locator('#custom-range button').click()
-        await expect(page.locator("#range-error")).to_contain_text("do not exist")
+        await expect(page.locator("#range-count")).to_have_value("6")
+        await expect(page.locator("#range-unit")).to_have_value("hours")
+        await snapshot("custom-six-hours")
+        for value, unit in (("", "hours"), ("0", "hours"), ("-1", "hours"), ("text", "hours"),
+                            ("1e2", "hours"), ("1e309", "hours"), ("Infinity", "hours"), ("NaN", "hours"),
+                            ("0.0001", "hours"), ("336.0001", "hours"), ("14.0001", "days")):
+            await invalid_range(value, unit, 21600, True)
+        await snapshot("custom-invalid")
+        await page.locator('[data-range="custom"]').click()
+        await expect(page.locator("#range-count")).to_have_value("6")
+        await expect(page.locator("#range-unit")).to_have_value("hours")
+        for count, unit, seconds in (("1.5", "hours", 5400), ("3", "days", 259200), ("14", "days", 1209600)):
+            await page.locator("#range-count").fill(count)
+            await select_value(page, page.locator("#range-unit"), unit)
+            await page.locator("#custom-range").get_by_role("button", name="Apply", exact=True).click()
+            applied = await rendered_range(page, seconds, custom=True, details=True)
+            await expect(page.locator("#range-error")).to_have_text("")
+            await snapshot(f"custom-{count}-{unit}")
+            saved = await page.evaluate("sessionStorage.getItem('connectivity-range')")
+            await page.reload()
+            await rendered_range(page, seconds, custom=True, after=applied["to"], details=True)
+            assert await page.evaluate("sessionStorage.getItem('connectivity-range')") == saved
+            await page.locator('[data-range="custom"]').click()
+            await expect(page.locator("#range-count")).to_have_value(count)
+            await expect(page.locator("#range-unit")).to_have_value(unit)
         await page.locator('[data-range="3600"]').click()
-        await passed("hour/day/fortnight/custom ranges, reload persistence, DST gap validation")
+        await rendered_range(page, 3600, details=True)
+        await expect(page.locator("#custom-range")).not_to_be_visible()
+        await passed("preset ranges; rolling custom 6/1.5 hours and 3/14 days; server-time refresh/reload, session persistence, invalid-duration rollback")
 
         await page.locator("#back-resources").click()
         await page.get_by_role("button", name="Edit Office <network>", exact=True).click()
@@ -467,12 +581,15 @@ async def run_browser(browser_type, args, primary, peer, report):
         await snapshot("mobile-reorder")
         await page.locator("#cancel-resource-order").click()
         await page.locator('[data-range="1209600"]').click()
-        await expect(page.locator('[data-range="1209600"]')).to_have_attribute("aria-pressed", "true")
+        await rendered_range(page, 1209600)
         await snapshot("overview-320-fortnight")
         await page.locator('[data-range="3600"]').click()
         await page.set_viewport_size({"width": 390, "height": 844})
+        await rendered_range(page, 3600)
         await page.get_by_role("link", name="Office <network>", exact=True).tap()
+        await expect(page.locator("#page-title")).to_have_text("Office <network>")
         await expect(page.locator(".check-card")).to_have_count(4)
+        await rendered_range(page, 3600, details=True)
         await page.locator(".check-card .latency-plot").first.tap()
         await expect(page.locator(".latency-tooltip").first).to_be_visible()
         await snapshot("mobile-details")
@@ -481,6 +598,10 @@ async def run_browser(browser_type, args, primary, peer, report):
         await page.get_by_role("button", name="Edit Office <network>", exact=True).tap()
         await expect(page.locator("#editor")).to_be_visible()
         await snapshot("mobile-editor")
+        await page.locator("#reorder-checks").tap()
+        await expect(page.locator(".check-fields.reorder-item")).to_have_count(4)
+        await snapshot("mobile-check-reorder")
+        await page.locator("#cancel-check-order").tap()
         await page.locator("#close-editor").tap()
         await page.locator("#settings").tap()
         await expect(page.locator("#settings")).to_have_attribute("aria-expanded", "true")

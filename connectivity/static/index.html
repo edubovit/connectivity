@@ -23,9 +23,19 @@
   <div id="banner" class="banner" role="alert" hidden></div>
 
   <main id="login" class="login" hidden>
-    <div class="login-intro"><span class="eyebrow">Connectivity / Private monitoring</span><h1>A clear view<br>of your network.</h1><p>Reachability, latency, and throughput.<br>Measured from this node.</p></div>
+    <div class="login-illustration" aria-hidden="true">
+      <svg viewBox="0 0 480 400" fill="none" focusable="false">
+        <path class="network-guide" d="M0 80h480M0 320h480M80 0v400M400 0v400"/>
+        <path class="network-link" d="M80 80h80v120h30M400 80h-80v120h-30M80 320h80V200M400 320h-80V200M240 44v106M240 250v106"/>
+        <g class="network-node"><rect x="54" y="54" width="52" height="52"/><rect x="374" y="54" width="52" height="52"/><rect x="54" y="294" width="52" height="52"/><rect x="374" y="294" width="52" height="52"/></g>
+        <path class="network-port" d="M68 74h24M68 86h16M388 74h24M388 86h16M68 314h24M68 326h16M388 314h24M388 326h16"/>
+        <rect class="network-hub" x="190" y="150" width="100" height="100"/>
+        <path class="network-signal" d="M205 200h16l9-22 17 44 10-22h18"/>
+        <g class="network-junction"><circle cx="160" cy="200" r="4"/><circle cx="320" cy="200" r="4"/><circle cx="240" cy="44" r="4"/><circle cx="240" cy="356" r="4"/></g>
+      </svg>
+    </div>
     <form id="login-form" class="login-card">
-      <h2>Sign in</h2>
+      <h1>Sign in</h1>
       <label for="password">Owner password</label>
       <input id="password" type="password" autocomplete="current-password" required maxlength="1024" autofocus>
       <p id="login-error" class="error" role="alert"></p>
@@ -38,9 +48,9 @@
     <aside id="navigation" class="rail" hidden>
       <span class="rail-label">Workspace</span>
       <nav aria-label="Main navigation">
-        <a id="nav-resources" href="#"><span aria-hidden="true">01</span> Resources</a>
-        <a id="nav-speedtest" href="#speedtest"><span aria-hidden="true">02</span> Speedtest</a>
-        <button id="settings" class="quiet" aria-haspopup="dialog" aria-controls="settings-dialog" aria-expanded="false"><span aria-hidden="true">03</span> Settings</button>
+        <a id="nav-resources" href="#"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="7" rx="1"/><rect x="3" y="14" width="18" height="7" rx="1"/><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6"/></svg>Resources</a>
+        <a id="nav-speedtest" href="#speedtest"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 19a10 10 0 1 1 16 0M5 12H3M12 5V3M19 12h2M12 14l5-6"/><circle cx="12" cy="15" r="2"/></svg>Speedtest</a>
+        <button id="settings" class="quiet" aria-haspopup="dialog" aria-controls="settings-dialog" aria-expanded="false"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 3v4m0 4v10M12 3v10m0 4v4M20 3v4m0 4v10M1 7h6v4H1zM9 13h6v4H9zM17 7h6v4h-6z"/></svg>Settings</button>
       </nav>
       <div class="rail-footer"><p>History in memory<br>1 h raw / 14 d summaries</p><button id="logout" class="quiet">Log out</button></div>
     </aside>
@@ -59,11 +69,12 @@
       <div class="range-buttons" id="range-buttons" role="group" aria-label="History range"><button data-range="3600" class="selected" aria-pressed="true">1 hour</button><button data-range="86400" aria-pressed="false">24 hours</button><button data-range="1209600" aria-pressed="false">14 days</button><button data-range="custom" aria-pressed="false">Custom</button></div>
     </section>
     <form id="custom-range" class="custom-range" hidden>
-      <label>Start, local time<input id="range-start" type="datetime-local" step="1" required></label><label>UTC offset<input id="offset-start" placeholder="+02:00" pattern="[+\-][0-9]{2}:[0-9]{2}" required></label>
-      <label>End, local time<input id="range-end" type="datetime-local" step="1" required></label><label>UTC offset<input id="offset-end" placeholder="+02:00" pattern="[+\-][0-9]{2}:[0-9]{2}" required></label>
-      <button type="submit">Apply</button><p id="range-error" class="error wide" role="alert"></p>
+      <span class="range-prompt">Show last</span>
+      <label><span class="sr-only">Range count</span><input id="range-count" type="text" inputmode="decimal" value="6" autocomplete="off" aria-describedby="range-hint range-error"></label>
+      <label><span class="sr-only">Range units</span><select id="range-unit"><option value="hours">hours</option><option value="days">days</option></select></label>
+      <button type="submit">Apply</button><span id="range-hint" class="muted">Up to 14 days. Updates with each refresh.</span><p id="range-error" class="error wide" role="alert"></p>
     </form>
-    <div class="range-meta"><span id="range-label"></span><details class="help"><summary>About this view</summary><div class="help-body"><p id="timezone"></p><p>Current status is live. The selected range applies to history only.</p><p>Availability excludes unknown time. Coverage is the share of time observed.</p><p>Timeline: any downtime is red; otherwise unobserved time is gray; otherwise bone. Open resource details to inspect block durations.</p><p>One hour of raw results; fourteen days of minute summaries. Restarting clears history and sessions.</p><p>Custom times use your browser’s timezone. Enter the correct UTC offset for each date, including DST.</p></div></details></div>
+    <div class="range-meta"><span id="range-label"></span><details class="help"><summary>About this view</summary><div class="help-body"><p id="timezone"></p><p>Current status is live. The selected range applies to history only.</p><p>Availability excludes unknown time. Coverage is the share of time observed.</p><p>Timeline: any downtime is red; otherwise unobserved time is gray; otherwise bone. Open resource details to inspect block durations.</p><p>One hour of raw results; fourteen days of minute summaries. Restarting clears history and sessions.</p><p>Custom ranges show the last number of elapsed hours or days, ending at server time. One day is 24 hours, including across daylight-saving changes.</p></div></details></div>
     <section id="resource-order-panel" class="order-panel" hidden aria-label="Resource reordering">
       <div class="order-heading"><strong>Reorder resources</strong><div class="order-actions"><button id="cancel-resource-order">Cancel</button><button id="reload-resource-order" hidden>Reload saved order</button><button id="save-resource-order" class="primary">Save order</button></div></div>
       <p>Drag a handle, or focus it and use the arrow keys. Escape undoes a picked-up move.</p><p id="resource-order-status" class="order-status" role="status"></p><p id="resource-order-error" class="error" role="alert"></p>

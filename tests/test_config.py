@@ -19,8 +19,20 @@ def config_path(tmp_path):
 def test_defaults_and_empty():
     data = validate({"version": 1, "auth": {"password": " keep whitespace "}, "resources": []})
     assert data["server"] == {"host": "127.0.0.1", "port": 8080, "allowed_hosts": []}
-    assert data["ui"]["refresh_interval_seconds"] == 15
+    assert data["ui"]["refresh_interval_seconds"] == 30
     assert data["auth"]["password"] == " keep whitespace "
+
+
+@pytest.mark.parametrize("settings,expected", [({}, 30), ({"ui": {}}, 30), ({"ui": {"refresh_interval_seconds": 15}}, 15)], ids=["omitted-ui", "omitted-refresh", "explicit-15"])
+def test_store_refresh_defaults_preserve_explicit_settings(config_path, settings, expected):
+    config_path.write_text(yaml.safe_dump({**configuration(), **settings}), encoding="utf-8")
+    original = config_path.read_bytes()
+    store = ConfigStore(config_path)
+    try:
+        assert store.data["ui"]["refresh_interval_seconds"] == expected
+        assert config_path.read_bytes() == original
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize("value", [True, 2130706433, None, "localhost", "127.0.0.1\n"])
@@ -137,7 +149,7 @@ def test_external_edit_and_failed_replace_leave_state(config_path, monkeypatch):
             store.persist(candidate)
         assert error.value.status == 503
         assert config_path.read_bytes() == original
-        assert store.data["ui"]["refresh_interval_seconds"] == 15
+        assert store.data["ui"]["refresh_interval_seconds"] == 30
         assert not list(config_path.parent.glob(".connectivity-*"))
         config_path.write_bytes(original + b"\n# external\n")
         with pytest.raises(Problem) as error:

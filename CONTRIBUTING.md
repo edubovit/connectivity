@@ -77,7 +77,7 @@ Only version 1 is accepted. YAML must be one safe document with unique string ke
 | `server.port` | Integer 1–65535, default 8080 |
 | `server.allowed_hosts` | Up to 100 exact additional DNS names for direct HTTP mode; not wildcard patterns |
 | `server.public_url` | Optional canonical HTTPS base URL; requires loopback binding; no credentials, query or fragment; plain path segments only |
-| `ui.refresh_interval_seconds` | Integer 1–300, default 15 |
+| `ui.refresh_interval_seconds` | Integer 1–300, default 30; explicit saved values are preserved |
 | `resources` | Required list, may be empty; at most 50 resources and 200 total checks |
 | Resource `id`, `name`, `checks` | Required; 1–20 checks per resource; unique resource IDs and case-insensitive names |
 | Check `id`, `name`, `type` | Required; globally unique check IDs, names unique within a resource, one of `ping`, `http`, `tcp`, `tls` |
@@ -193,11 +193,15 @@ Full UI regression suite (use the browser environment's interpreter):
 python tools/ui_browser_check.py
 ```
 
-Install Chromium as well as Firefox and WebKit for this suite. It starts and stops its own isolated loopback fixtures using `.venv` (override with `--python PATH`), never a production config. It covers login/session loss, all probe editors, filters, history ranges and DST validation, keyboard/pointer reordering, conflicts and failed saves, chart inspection, raw pagination, mobile layouts, peer credentials, cancellation, and full browser/node transfers. Immediate cancellation uses a pointer click; mid-transfer cancellation clicks the UI button from inside the page for deterministic phase timing under full loopback load. Full transfers can move gigabytes locally; `--skip-transfers` omits completed-transfer checks for a quick UI run. `--browsers chromium` selects one engine.
+Install Chromium as well as Firefox and WebKit for this suite. It starts and stops its own isolated loopback fixtures using `.venv` (override with `--python PATH`), never a production config. It covers login/session loss, all probe editors, filters, rolling history ranges and invalid durations, keyboard/pointer reordering, conflicts and failed saves, chart inspection, raw pagination, mobile layouts, peer credentials, cancellation, and full browser/node transfers. Immediate cancellation uses a pointer click; mid-transfer cancellation clicks the UI button from inside the page for deterministic phase timing under full loopback load. Full transfers can move gigabytes locally; `--skip-transfers` omits completed-transfer checks for a quick UI run. `--browsers chromium` selects one engine.
 
 Screenshots and the JSON report go to `.local/ui-browser/`. Prefix-mode browser checks intercept an HTTPS origin and forward requests and the origin's browser cookie jar to a real loopback backend, verifying relative assets, navigation, cookie flags and APIs without changing system trust. WebKit interception does not expose its outgoing Cookie header, so the bridge supplies cookies explicitly. This is not a real TLS termination/nginx test. The suite also checks accessible control names, text size and page overflow; it is not a complete accessibility audit or a native mobile/Safari test.
 
-The UI follows Swiss After Dark: charcoal surfaces, bone text, a scarlet index rail, and a two-column resource grid that collapses on narrow screens. Failed tiles retain their position, size and single-column span. Hover lightens the entire tile while keeping its state color; keyboard focus adds an outline. A tile's non-interactive surface opens its resource details; Edit remains independent. Pointer reordering accounts for both grid columns and rows, and arrow keys follow saved array order.
+The UI follows Swiss After Dark: charcoal surfaces, bone text, a scarlet rail with labeled navigation icons, and a two-column resource grid that collapses on narrow screens. Resource names lead each tile, with an outlined Edit action at the upper right and no decorative numbering. Failed tiles retain their position, size and single-column span. Hover lightens the entire tile while keeping its state color; keyboard focus adds an outline. A tile's non-interactive surface opens its resource details; Edit remains independent. Login uses a static, decorative network diagram rather than promotional copy.
+
+Check reordering uses compact rows and six-dot grips. Pointer reordering accounts for both grid columns and rows, and arrow keys follow saved array order. Committed moves animate for 180 ms unless reduced motion is requested; Escape cancels a picked-up move. Field nodes and draft values survive movement. Save, not dragging or Done, persists an order.
+
+Custom history selection is “Show last” a positive count of hours or days, including fractions, from one second through fourteen days. It remains a rolling duration ending at server time on each refresh, survives same-session reloads, and never converts missing observations to known time. Existing settings keep their configured refresh interval; new or omitted UI refresh settings default to 30 seconds. Probe schedules are independent.
 
 Availability timelines are 12 px tall and span each card's content width, including while reordering. Overview timelines are part of the tile link; resource detail and check timelines retain hover/touch/keyboard inspection. Both availability and latency charts show start, midpoint and end times; longer or cross-day ranges include dates, with full local timestamps and UTC offsets available on the labels. Browser checks assert these contracts at desktop and mobile widths, including real probe-driven state transitions that must not move or resize a tile.
 
@@ -210,7 +214,7 @@ Manual browser checklist for UI changes:
 - Login/logout, stale/expired sessions, keyboard and mobile/touch layout; no script errors, secrets or third-party asset requests.
 - Add/edit/delete all check types, expected failures, input escaping, empty state, filters, details, charts and recent results.
 - Reordering by mouse/touch/keyboard; cancellation, stale revisions, save failures and refresh while arranging.
-- Rolling hour/day/fourteen-day ranges, custom browser-local times and DST gaps/overlaps; missing data remains unknown.
+- Rolling hour/day/fourteen-day ranges and custom “Show last” counts in hours or days (including fractions, maximum fourteen days); missing data remains unknown. A day is 24 elapsed hours across DST changes.
 - Offline/reconnect behavior; no overlapping polling or browser-driven reset of backend generations.
 - Direct HTTP plus HTTPS root and prefix routing; non-default public port, correct cookies, Host/Origin/CSRF rejection.
 - Speedtest success, immediate and mid-transfer cancel, unavailable phases, reload/logout, peer edit/redaction and busy conflicts. Wait for authenticated UI, not an enabled button in a hidden panel.

@@ -36,8 +36,7 @@ function restoreRange() {
     const saved=JSON.parse(sessionStorage.getItem("connectivity-range"));
     if(saved?.csrf!==csrf)return;
     const range=saved.selected;
-    if([3600,86400,1209600].includes(range?.seconds))selected={seconds:range.seconds};
-    else if(typeof range?.from==="string"&&typeof range?.to==="string"&&Date.parse(range.from)<Date.parse(range.to)&&Date.parse(range.to)-Date.parse(range.from)<=1209600000)selected={from:range.from,to:range.to};
+    if(typeof range?.seconds==="number"&&Number.isFinite(range.seconds)&&range.seconds>=1&&range.seconds<=1209600)selected={seconds:range.seconds,...(range.custom?{custom:true}:{})};
   } catch {}
 }
 
@@ -99,7 +98,6 @@ function setStale(message) {
   $("live").classList.toggle("stale", Boolean(message));
 }
 function getRange(data) {
-  if (selected.from) return {from:selected.from, to:selected.to};
   const to = new Date(data.server_time);
   return {from:new Date(to.getTime() - selected.seconds * 1000).toISOString(), to:to.toISOString()};
 }
@@ -124,7 +122,7 @@ async function refresh() {
   } finally {
     busy = false;
     if (again) { again = false; if (csrf) timer = setTimeout(refresh, 0); }
-    else if (csrf) timer = setTimeout(refresh, (statusData?.refresh_interval_seconds || 15) * 1000);
+    else if (csrf) timer = setTimeout(refresh, (statusData?.refresh_interval_seconds || 30) * 1000);
   }
 }
 function badge(state) { return node("span", {class:`badge ${state}`}, state); }
@@ -191,10 +189,13 @@ function resourceCard(resource, detailed = false, previous) {
   const indicators = resource.checks.filter(c=>c.reason === "overdue" || c.latest?.outcome === "error");
   const meta = node("div", {class:"resource-meta"}, badge(resource.state), node("span",{},`${resource.checks.length} ${resource.checks.length===1?"check":"checks"}`));
   const head=card.querySelector(".resource-head")||node("div",{class:"resource-head"});
-  const index=card.querySelector(".resource-index")||node("span",{class:"resource-index","aria-hidden":"true"});
-  index.textContent=String(statusData.resources.findIndex(r=>r.id===resource.id)+1).padStart(2,"0");
-  updateChildren(head,[index,title,meta]);
-  const actions = card.querySelector(".card-actions")||node("div",{class:"card-actions"},node("button",{class:"quiet","aria-label":`Edit ${resource.name}`,onclick:()=>openEditor(resource.id)},"Edit"));
+   updateChildren(head,[title,meta]);
+   let actions = card.querySelector(".card-actions");
+   if(!actions){
+     const icon=svgNode("svg",{viewBox:"0 0 24 24","aria-hidden":"true",focusable:"false"});
+     icon.append(svgNode("path",{d:"m15 5 4 4M4 20l5-1L20 8a2.8 2.8 0 0 0-4-4L5 15Z"}));
+     actions=node("div",{class:"card-actions"},node("button",{class:"edit-resource","aria-label":`Edit ${resource.name}`,onclick:()=>openEditor(resource.id)},icon,"Edit"));
+   }
   actions.querySelector("button").setAttribute("aria-label",`Edit ${resource.name}`);
   actions.hidden = Boolean(orderSnapshot);
   const body=card.querySelector(".resource-body")||node("div",{class:"resource-body"});
@@ -311,8 +312,8 @@ function render() {
   if(!$("health").children.length)$("health").append(node("p",{class:"precision"},"No monitor notices."));
   $("monitor-health").dataset.notice=String(Boolean(statusData.health.notices.length||statusData.health.skipped_starts));
   $("monitor-health").querySelector("summary").textContent=statusData.health.notices.length?"Monitor notices":"Monitor health";
-  $("range-label").textContent = `${selected.from ? "Fixed" : "Rolling"} · ${local(lastRange.from)} – ${local(lastRange.to)}`;
-  document.querySelectorAll("[data-range]").forEach(b=>{const active=selected.from?b.dataset.range==="custom":+b.dataset.range===selected.seconds;b.classList.toggle("selected",active);b.setAttribute("aria-pressed",String(active));});
+  $("range-label").textContent = `Rolling · ${local(lastRange.from)} – ${local(lastRange.to)}`;
+  document.querySelectorAll("[data-range]").forEach(b=>{const active=selected.custom?b.dataset.range==="custom":+b.dataset.range===selected.seconds;b.classList.toggle("selected",active);b.setAttribute("aria-pressed",String(active));});
   const content = $("content");
   content.classList.toggle("resource-grid",!resource);
   if (orderSnapshot && resourceDrag) {
@@ -348,6 +349,7 @@ function updateCheckPositions() {
 function startCheckOrder() {
   if (checkDrag || $("save-resource").disabled || $("check-fields").children.length < 2) return;
   $("check-fields").querySelectorAll(".check-editor").forEach(details=>details.open=false);
+  $("check-fields").querySelectorAll(".check-editor>summary").forEach(summary=>summary.setAttribute("aria-disabled","true"));
   checkOrderStart = [...$("check-fields").children];
   checkDrag = DragOrder.attach($("check-fields"), {
     name:item=>`check ${item.querySelector('input[name="name"]').value.trim() || "Unnamed check"}`,
@@ -361,6 +363,7 @@ function startCheckOrder() {
 }
 function endCheckOrder(cancel) {
   checkDrag?.destroy();checkDrag=null;
+  $("check-fields").querySelectorAll(".check-editor>summary").forEach(summary=>summary.removeAttribute("aria-disabled"));
   if (cancel && checkOrderStart) checkOrderStart.forEach(item=>$("check-fields").append(item));
   checkOrderStart=null;
   $("reorder-checks").hidden=false;
@@ -399,7 +402,6 @@ async function openResourceOrder() {
     resourceDrag=DragOrder.attach($("content"), {
       name:item=>`resource ${item.querySelector(".resource-name").textContent}`,
       announce:text=>$("resource-order-status").textContent=text,
-      changed:()=>[...$("content").children].forEach((item,index)=>item.querySelector(".resource-index").textContent=String(index+1).padStart(2,"0")),
     });
     $("save-resource-order").disabled=snapshot.resources.length<2;
   } catch (error) {
@@ -415,6 +417,7 @@ function addCheckFields(check = null) {
   const box = node("fieldset",{class:"check-fields","data-id":c.id},node("legend",{class:"order-position"},"Check"));
   if(!check)$("check-fields").querySelectorAll(".check-editor").forEach(details=>details.open=false);
   const summary=node("summary");
+  summary.addEventListener("click",event=>{if(checkDrag)event.preventDefault();});
   const details=node("details",{class:"check-editor",open:!check||!$("check-fields").children.length},summary);
   const fields=node("div",{class:"check-edit-fields"});
   const name=field("Check name","name",c.name,{maxlength:100,oninput:()=>{updateSummary();checkDrag?.refresh();}});
@@ -485,6 +488,7 @@ async function deleteResource(rid) {
   finally{$("delete-resource").disabled=false;}
 }
 $("editor-form").addEventListener("invalid",event=>{
+  if(checkDrag)endCheckOrder(false);
   const details=event.target.closest(".check-editor");
   if(details)details.open=true;
   if(event.target===$("editor-form").querySelector("input:invalid,select:invalid"))requestAnimationFrame(()=>SelectControl.focus(event.target));
@@ -543,8 +547,6 @@ $("logout").addEventListener("click",async()=>{try{await api("/session",{method:
 $("name-filter").addEventListener("input",render);$("state-filter").addEventListener("change",render);
 window.addEventListener("hashchange",()=>{if(orderSnapshot && (detailId()||speedPage()))endResourceOrder();navigate();});
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)refresh();else clearTimeout(timer);});
-function offset(date) {const n=-date.getTimezoneOffset();return `${n<0?"-":"+"}${String(Math.floor(Math.abs(n)/60)).padStart(2,"0")}:${String(Math.abs(n)%60).padStart(2,"0")}`;}
-function localInput(date) {return new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,19);}
 $("timezone").textContent=`Local time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}`;
 if (location.protocol === "https:") {
   document.querySelector(".security-note").textContent="Encrypted connection. Keep this private monitor restricted to trusted users.";
@@ -552,16 +554,25 @@ if (location.protocol === "https:") {
 }
 document.querySelectorAll("[data-range]").forEach(button=>button.addEventListener("click",()=>{
   const custom=button.dataset.range==="custom";$("custom-range").hidden=!custom;
-  if(custom){const end=new Date(selected.to||statusData?.server_time||Date.now()),start=selected.from?new Date(selected.from):new Date(end-3600000);$("range-start").value=localInput(start);$("range-end").value=localInput(end);$("offset-start").value=offset(start);$("offset-end").value=offset(end);}
+  $("range-error").textContent="";$("range-count").removeAttribute("aria-invalid");
+  if(custom){
+    const duration=selected.custom?selected.seconds:21600;
+    const days=duration%86400===0;
+    $("range-count").value=String(duration/(days?86400:3600));$("range-unit").value=days?"days":"hours";
+    SelectControl.sync($("range-unit"));$("range-count").focus();
+  }
   else{selected={seconds:Number(button.dataset.range)};rememberRange();refresh();}
 }));
-function parseLocal(value,zone) {
-  if(!/^[+-](?:0\d|1\d|2[0-3]):[0-5]\d$/.test(zone))throw new Error("Use an explicit UTC offset, for example +02:00 or -04:00.");
-  const date=new Date(value+zone);const expected=value.length===16?value+":00":value;
-  if(!Number.isFinite(date.getTime())||localInput(date)!==expected||offset(date)!==zone)throw new Error("That local time and offset do not exist in your browser timezone. Check the date, DST transition, and offset.");
-  return date.toISOString();
-}
-$("custom-range").addEventListener("submit",event=>{event.preventDefault();try{const from=parseLocal($("range-start").value,$("offset-start").value),to=parseLocal($("range-end").value,$("offset-end").value);if(from>=to||Date.parse(to)>Date.parse(statusData.server_time)||Date.parse(to)-Date.parse(from)>1209600000)throw new Error("Start must precede end, end cannot exceed current server time, and maximum span is 14 days.");selected={from,to};rememberRange();$("range-error").textContent="";refresh();}catch(error){$("range-error").textContent=error.message;}});
+$("custom-range").addEventListener("submit",event=>{
+  event.preventDefault();
+  const count=$("range-count").value.trim(),unit=$("range-unit").value;
+  const duration=Number(count)*(unit==="days"?86400:3600);
+  if(!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(count)||!Number.isFinite(duration)||duration<1||duration>1209600){
+    $("range-error").textContent="Enter a positive number of hours or days, from 1 second up to 14 days (336 hours).";
+    $("range-count").setAttribute("aria-invalid","true");$("range-count").focus();return;
+  }
+  selected={seconds:duration,custom:true};rememberRange();$("range-error").textContent="";$("range-count").removeAttribute("aria-invalid");refresh();
+});
 SpeedUI.setup({api,node,id,local,csrf:()=>csrf});
 document.querySelector(".skip-link").addEventListener("click",event=>{event.preventDefault();(csrf?(speedPage()?$("speedtest"):$("dashboard")):$("password")).focus();});
 (async()=>{try{const data=await api("/session");csrf=data.csrf_token;restoreRange();showDashboard();}catch{showLogin();}})();

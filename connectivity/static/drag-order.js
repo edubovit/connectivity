@@ -23,13 +23,19 @@ const DragOrder = (() => {
     const items = () => [...list.children];
     const scrollArea = list.closest("dialog") || document.scrollingElement;
     const handles = new Map();
+    const animations = new Set();
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const icon = () => {
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("viewBox", "0 0 24 24");
       svg.setAttribute("aria-hidden", "true");
-      const path = document.createElementNS(svg.namespaceURI, "path");
-      path.setAttribute("d", "M12 2v20M2 12h20M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4");
-      svg.append(path);
+      svg.setAttribute("focusable", "false");
+      for (const x of [9, 15]) for (const y of [6, 12, 18]) {
+        const dot = document.createElementNS(svg.namespaceURI, "circle");
+        dot.setAttribute("cx", x); dot.setAttribute("cy", y); dot.setAttribute("r", "1.5");
+        dot.setAttribute("fill", "currentColor"); dot.setAttribute("stroke", "none");
+        svg.append(dot);
+      }
       return svg;
     };
     for (const item of items()) {
@@ -57,6 +63,39 @@ const DragOrder = (() => {
     function clearMarker() {
       for (const item of items()) item.classList.remove("drop-before", "drop-after");
     }
+    function stopAnimations() {
+      for (const animation of animations) {
+        animation.onfinish = null;
+        animation.cancel();
+      }
+      animations.clear();
+    }
+    function positions() {
+      const bounds = list.getBoundingClientRect();
+      return new Map(items().map(item => {
+        const box = item.getBoundingClientRect();
+        return [item, {left: box.left - bounds.left, top: box.top - bounds.top}];
+      }));
+    }
+    function reorder(update) {
+      const before = !disabled && !reducedMotion.matches ? positions() : null;
+      stopAnimations();
+      moving = true;
+      update();
+      moving = false;
+      if (!before) return;
+      for (const [item, box] of positions()) {
+        const previous = before.get(item), x = previous.left - box.left, y = previous.top - box.top;
+        if (!x && !y) continue;
+        const animation = item.animate([
+          {transform: `translate(${x}px, ${y}px)`},
+          {transform: "translate(0, 0)"},
+        ], {duration: 180, easing: "cubic-bezier(.2,.7,.2,1)"});
+        animations.add(animation);
+        animation.onfinish = () => animations.delete(animation);
+      }
+    }
+    function motionChanged() { if (reducedMotion.matches) stopAnimations(); }
     function preview() {
       if (!drag || drag.keyboard || !drag.moved) return;
       clearMarker();
@@ -66,6 +105,7 @@ const DragOrder = (() => {
       drag.slot = style.display === "grid" && style.gridTemplateColumns.split(" ").length > 1
         ? gridInsertionIndex(boxes, drag.currentX, drag.y)
         : insertionIndex(boxes.map(box => box.top + box.height / 2), drag.y);
+      if (drag.slot === items().indexOf(drag.item)) return;
       const target = remaining[drag.slot] || remaining.at(-1);
       target?.classList.add(drag.slot < remaining.length ? "drop-before" : "drop-after");
     }
@@ -85,14 +125,18 @@ const DragOrder = (() => {
       const state = drag;
       drag = null;
       cancelAnimationFrame(frame);
+      frame = null;
       clearMarker();
       state.item.classList.remove("dragging");
       state.handle.setAttribute("aria-pressed", "false");
       if (state.pointer !== undefined && state.handle.hasPointerCapture(state.pointer)) state.handle.releasePointerCapture(state.pointer);
-      if (cancel && state.keyboard) state.original.forEach(item => list.append(item));
+      if (cancel) {
+        stopAnimations();
+        if (state.keyboard) state.original.forEach(item => list.append(item));
+      }
       else if (!cancel && !state.keyboard && state.moved) {
         const remaining = items().filter(item => item !== state.item);
-        list.insertBefore(state.item, remaining[state.slot] || null);
+        if (state.slot !== items().indexOf(state.item)) reorder(() => list.insertBefore(state.item, remaining[state.slot] || null));
       }
       refresh();
       if (refocus) state.handle.focus({preventScroll: true});
@@ -102,6 +146,7 @@ const DragOrder = (() => {
       const handle = event.target.closest(".drag-handle");
       if (!handle || !list.contains(handle) || disabled || handle.disabled || event.button !== 0 || event.isPrimary === false) return;
       if (drag) finish(true);
+      stopAnimations();
       event.preventDefault();
       handle.focus({preventScroll: true});
       const item = handle.parentElement;
@@ -125,7 +170,7 @@ const DragOrder = (() => {
     function pointerCancel(event) { if (drag?.pointer === event.pointerId) finish(true); }
     function keyDown(event) {
       const handle = event.target.closest(".drag-handle");
-      if (!handle || !list.contains(handle) || disabled) return;
+      if (!handle || !list.contains(handle) || disabled || handle.disabled) return;
       if (event.key === "Escape" && drag) {
         event.preventDefault(); event.stopPropagation(); finish(true); return;
       }
@@ -145,10 +190,10 @@ const DragOrder = (() => {
       if (drag && drag.item !== item) finish();
       const current = items().indexOf(item), remaining = items().filter(other => other !== item);
       const index = event.key === "Home" ? 0 : event.key === "End" ? remaining.length : Math.max(0, Math.min(remaining.length, current + (["ArrowUp","ArrowLeft"].includes(event.key) ? -1 : 1)));
-      moving = true;
-      list.insertBefore(item, remaining[index] || null);
-      refresh(); handle.focus({preventScroll: true}); item.scrollIntoView({block: "nearest"});
-      moving = false;
+      if (index !== current) reorder(() => {
+        list.insertBefore(item, remaining[index] || null);
+        refresh(); handle.focus({preventScroll: true}); item.scrollIntoView({block: "nearest", behavior: "instant"});
+      });
       announce(`${name(item)} moved to position ${index + 1} of ${list.children.length}. ${drag ? "Space to drop; Escape to undo." : "Save to apply."}`);
     }
     function focusOut(event) {
@@ -158,14 +203,17 @@ const DragOrder = (() => {
     const listeners = {pointerdown: pointerDown, pointermove: pointerMove, pointerup: pointerUp, pointercancel: pointerCancel, lostpointercapture: pointerCancel, keydown: keyDown, focusout: focusOut};
     for (const [type, listener] of Object.entries(listeners)) list.addEventListener(type, listener);
     window.addEventListener("blur", blur);
+    reducedMotion.addEventListener("change", motionChanged);
     refresh();
     return {
       refresh,
-      setDisabled(value) { finish(); disabled = value; refresh(); },
+      setDisabled(value) { disabled = value; finish(); if (disabled) stopAnimations(); refresh(); },
       destroy() {
         finish(true, false);
+        stopAnimations();
         for (const [type, listener] of Object.entries(listeners)) list.removeEventListener(type, listener);
         window.removeEventListener("blur", blur);
+        reducedMotion.removeEventListener("change", motionChanged);
         for (const [item, handle] of handles) { handle.remove(); item.classList.remove("reorder-item"); }
         list.classList.remove("drag-order-list");
       },

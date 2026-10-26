@@ -186,7 +186,7 @@ def validate(candidate):
             invalid("server.allowed_hosts", "additional allowed hosts must be DNS names; local interface IPs are allowed automatically")
     ui = d.setdefault("ui", {})
     mapping(ui, {"refresh_interval_seconds"}, set(), "ui")
-    ui["refresh_interval_seconds"] = number(ui.get("refresh_interval_seconds", 15), 1, 300, "ui.refresh_interval_seconds", True)
+    ui["refresh_interval_seconds"] = number(ui.get("refresh_interval_seconds", 30), 1, 300, "ui.refresh_interval_seconds", True)
     resources = d["resources"]
     if not isinstance(resources, list) or len(resources) > 50:
         invalid("resources", "must be a list of at most 50 resources")

@@ -74,7 +74,7 @@ server:
 auth:
   password: "CHANGE_ME_BEFORE_STARTING"
 ui:
-  refresh_interval_seconds: 15
+  refresh_interval_seconds: 30
 resources: []
 ```
 
